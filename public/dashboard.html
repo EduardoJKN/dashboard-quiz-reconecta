@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Dashboard · Diagnóstico Reconecta</title>
+  <style>
+    :root {
+      --vinho: #5c1a1a; --vinho2: #431210; --dourado: #ead2a0; --ouro: #b8860b;
+      --creme: #faf5ec; --texto: #3a2a26; --cinza: #8a7a72;
+      --verde: #2e7d52; --vermelho: #b54a45;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Georgia, 'Times New Roman', serif; background: var(--creme); color: var(--texto); padding: 28px 18px 60px; }
+    .wrap { max-width: 1040px; margin: 0 auto; }
+    header { text-align: center; margin-bottom: 22px; }
+    header h1 { color: var(--vinho); font-size: 26px; }
+    header p { color: var(--cinza); font-size: 13px; margin-top: 4px; }
+    .barra-topo { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+    .btn { background: var(--vinho); color: var(--dourado); border: none; border-radius: 8px; padding: 9px 16px; font-family: inherit; font-size: 13px; cursor: pointer; }
+    .btn:hover { background: var(--vinho2); }
+    .atualizado { font-size: 12px; color: var(--cinza); }
+
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 26px; }
+    .card { background: #fff; border: 1px solid #ecddc4; border-radius: 12px; padding: 16px; text-align: center; box-shadow: 0 1px 3px rgba(92,26,26,.05); }
+    .card .num { font-size: 26px; color: var(--vinho); font-weight: bold; }
+    .card .lbl { font-size: 12px; color: var(--cinza); margin-top: 4px; line-height: 1.3; }
+    .card.destaque { background: var(--vinho); }
+    .card.destaque .num, .card.destaque .lbl { color: var(--dourado); }
+    .card.ouro { background: linear-gradient(135deg, #7a5a10, var(--ouro)); }
+    .card.ouro .num, .card.ouro .lbl { color: #fff; }
+
+    section { background: #fff; border: 1px solid #ecddc4; border-radius: 12px; padding: 20px 22px; margin-bottom: 22px; }
+    section h2 { color: var(--vinho); font-size: 18px; margin-bottom: 4px; }
+    section .desc { font-size: 12px; color: var(--cinza); margin-bottom: 16px; }
+    code { background: #f3ead9; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+    /* Barras horizontais (perguntas, perfis, abandono) */
+    .linha { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .linha .nome { width: 190px; font-size: 13px; flex-shrink: 0; }
+    .linha .trilho { flex: 1; background: #f0e7d6; border-radius: 6px; height: 24px; position: relative; overflow: hidden; }
+    .linha .preench { height: 100%; background: linear-gradient(90deg, var(--vinho), #7a2a2a); border-radius: 6px; min-width: 2px; transition: width .4s; }
+    .linha .val { width: 150px; font-size: 12px; text-align: right; flex-shrink: 0; color: var(--cinza); }
+    .linha .val b { color: var(--texto); }
+    .drop { color: var(--vermelho); }
+    .perfil .preench { background: linear-gradient(90deg, var(--ouro), var(--dourado)); }
+    .perfil .nome { width: 230px; }
+
+    /* Desenho do funil (afunilando) */
+    .funil-desenho { padding: 6px 0; }
+    .fd-row { display: grid; grid-template-columns: 175px 1fr 160px; align-items: center; gap: 10px; margin-bottom: 7px; }
+    .fd-label { font-size: 13px; }
+    .fd-track { display: flex; justify-content: center; }
+    .fd-bar { height: 30px; border-radius: 7px; background: linear-gradient(90deg, #7a2a2a, var(--vinho)); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; font-weight: bold; min-width: 34px; box-shadow: 0 1px 4px rgba(92,26,26,.15); }
+    .fd-bar.ouro { background: linear-gradient(90deg, var(--ouro), #d4a52a); color: var(--vinho2); }
+    .fd-val { font-size: 12px; text-align: right; color: var(--cinza); }
+    .fd-val b { color: var(--texto); font-size: 13px; }
+    .fd-sep { text-align: center; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--ouro); margin: 12px 0 8px; }
+
+    .vazio { text-align: center; color: var(--cinza); padding: 30px; font-size: 14px; }
+    .login { max-width: 360px; margin: 60px auto; text-align: center; }
+    .login input { width: 100%; padding: 11px; border: 1px solid #d8c6a8; border-radius: 8px; font-family: inherit; margin: 12px 0; font-size: 14px; }
+    .aviso { background: #fff7e8; border: 1px solid #f0d9a8; color: #8a6d2a; font-size: 12px; border-radius: 8px; padding: 10px 14px; margin-bottom: 22px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+    @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } .fd-row { grid-template-columns: 120px 1fr 96px; } .linha .nome { width: 130px; } .linha .val { width: 110px; } }
+  </style>
+</head>
+<body>
+  <div class="wrap" id="app">
+    <div class="vazio">Carregando…</div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    let token = params.get('token') || '';
+
+    function fmtData(ts) { return new Date(ts).toLocaleString('pt-BR'); }
+    function fmtBRL(n) { return (Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+    function telaLogin(msg) {
+      document.getElementById('app').innerHTML = `
+        <div class="login">
+          <h1 style="color:#5c1a1a">Dashboard Reconecta</h1>
+          <p style="color:#8a7a72;font-size:13px;margin-top:6px">${msg || 'Informe o token de acesso.'}</p>
+          <input id="tk" type="password" placeholder="token de acesso" />
+          <button class="btn" onclick="entrar()">Entrar</button>
+        </div>`;
+    }
+    function entrar() {
+      const v = document.getElementById('tk').value.trim();
+      if (!v) return;
+      location.search = '?token=' + encodeURIComponent(v);
+    }
+
+    function barra(nome, preenchPct, valHtml, extraClass) {
+      return `
+        <div class="linha ${extraClass || ''}">
+          <div class="nome">${nome}</div>
+          <div class="trilho"><div class="preench" style="width:${Math.max(0, Math.min(100, preenchPct))}%"></div></div>
+          <div class="val">${valHtml}</div>
+        </div>`;
+    }
+
+    function stage(m, key) {
+      const f = (m.funil || []).find((x) => x.key === key);
+      return f || { sessoes: 0, pct_topo: 0, abandonaram: 0, label: key };
+    }
+
+    function fdRow(label, count, pct, drop, ouro) {
+      const w = Math.max(3, Math.min(100, pct));
+      const dropHtml = drop > 0 ? ` <span class="drop">−${drop}</span>` : '';
+      return `
+        <div class="fd-row">
+          <div class="fd-label">${label}</div>
+          <div class="fd-track"><div class="fd-bar ${ouro ? 'ouro' : ''}" style="width:${w}%">${count}</div></div>
+          <div class="fd-val"><b>${count}</b> · ${pct}%${dropHtml}</div>
+        </div>`;
+    }
+
+    function render(m) {
+      const t = m.totais;
+      const c = m.conversao;
+      const pg = m.pagamento || {};
+      const semDados = m.total_sessoes === 0;
+      const base = stage(m, 'visita').sessoes || 1;
+      const pctB = (n) => (base ? Math.round((n / base) * 1000) / 10 : 0);
+
+      // ---- Cards de números-chave ----
+      const cards = `
+        <div class="cards">
+          <div class="card"><div class="num">${t.visitas}</div><div class="lbl">Abriram o quiz</div></div>
+          <div class="card"><div class="num">${t.iniciaram}</div><div class="lbl">Começaram</div></div>
+          <div class="card"><div class="num">${t.leads}</div><div class="lbl">Leads (formulário)</div></div>
+          <div class="card"><div class="num">${t.resultados}</div><div class="lbl">Viram o diagnóstico</div></div>
+          <div class="card"><div class="num">${t.compras}</div><div class="lbl">Clicaram comprar</div></div>
+          <div class="card ouro"><div class="num">${pg.pagos_total || 0}</div><div class="lbl">Pagos (Pix + cartão)</div></div>
+          <div class="card destaque"><div class="num">${c.geral}%</div><div class="lbl">Conversão geral<br>(abriu → PDF)</div></div>
+        </div>`;
+
+      // ---- Desenho do funil (sessões) + pagamento ----
+      const ordem = ['visita', 'iniciou', 'captura', 'lead', 'resultado', 'compra', 'pdf'];
+      let desenho = ordem.map((k) => {
+        const s = stage(m, k);
+        return fdRow(s.label, s.sessoes, s.pct_topo, s.abandonaram, false);
+      }).join('');
+      desenho += `<div class="fd-sep">— checkout · Guru —</div>`;
+      desenho += fdRow('Pagou no Pix', pg.pix || 0, pctB(pg.pix || 0), 0, true);
+      desenho += fdRow('Pagou no cartão', pg.cartao || 0, pctB(pg.cartao || 0), 0, true);
+      if (pg.boleto) desenho += fdRow('Pagou no boleto', pg.boleto, pctB(pg.boleto), 0, true);
+
+      // ---- Bloco de pagamento ----
+      const pagCards = `
+        <div class="cards" style="margin-bottom:0">
+          <div class="card"><div class="num">${pg.pix || 0}</div><div class="lbl">Pagos no Pix</div></div>
+          <div class="card"><div class="num">${pg.cartao || 0}</div><div class="lbl">Pagos no cartão</div></div>
+          <div class="card"><div class="num">${pg.pagos_total || 0}</div><div class="lbl">Total pago</div></div>
+          <div class="card"><div class="num">${pg.reembolsos || 0}</div><div class="lbl">Reembolsos</div></div>
+          <div class="card"><div class="num">${pg.taxa_reembolso || 0}%</div><div class="lbl">Taxa de reembolso</div></div>
+          <div class="card ouro"><div class="num">R$ ${fmtBRL(pg.faturamento_liquido || 0)}</div><div class="lbl">Faturamento líquido</div></div>
+          <div class="card"><div class="num">R$ ${fmtBRL(pg.ticket || 0)}</div><div class="lbl">Ticket médio</div></div>
+        </div>`;
+      const pagAviso = pg.conectado
+        ? ''
+        : `<div class="aviso">⏳ Nenhum pagamento recebido ainda. Assim que o time apontar o webhook do Guru pra <code>/api/webhook/pagamento</code>, Pix, cartão e reembolso aparecem aqui sozinhos.</div>`;
+
+      // ---- Funil por pergunta (P1..P15) ----
+      const perguntas = (m.funil || []).filter((f) => /^p\d+$/.test(f.key));
+      const perguntasHtml = perguntas.length
+        ? perguntas.map((f) => barra(
+            f.label, f.pct_topo,
+            `<b>${f.sessoes}</b> · ${f.pct_topo}%${f.abandonaram > 0 ? ` <span class="drop">−${f.abandonaram}</span>` : ''}`
+          )).join('')
+        : '<div class="vazio">Ninguém respondeu perguntas ainda.</div>';
+
+      // ---- Conversão ----
+      const conv = `
+        <div class="cards" style="margin-bottom:0">
+          <div class="card"><div class="num">${c.visita_resultado}%</div><div class="lbl">Abriu → Diagnóstico</div></div>
+          <div class="card"><div class="num">${c.resultado_compra}%</div><div class="lbl">Diagnóstico → Comprar</div></div>
+          <div class="card"><div class="num">${c.compra_pago}%</div><div class="lbl">Comprar → Pago</div></div>
+          <div class="card"><div class="num">${c.compra_pdf}%</div><div class="lbl">Comprar → PDF</div></div>
+        </div>`;
+
+      // ---- Perfis + onde pararam ----
+      const perfilHtml = m.perfis.length
+        ? m.perfis.map((p) => barra(`${p.emoji} ${p.nome}`, p.pct, `<b>${p.count}</b> · ${p.pct}%`, 'perfil')).join('')
+        : '<div class="vazio">Ninguém chegou ao diagnóstico ainda.</div>';
+      const abandonoHtml = m.abandono.length
+        ? m.abandono.map((a) => barra(a.label, m.total_sessoes ? (a.count / m.total_sessoes) * 100 : 0, `<b>${a.count}</b> sessões`)).join('')
+        : '<div class="vazio">Sem abandonos registrados.</div>';
+
+      document.getElementById('app').innerHTML = `
+        <header>
+          <h1>📊 Dashboard · Diagnóstico Reconecta</h1>
+          <p>Funil completo do quiz + pagamento (Guru) · serviço paralelo</p>
+        </header>
+        <div class="aviso">⚠️ No plano Free do Render os dados zeram a cada redeploy/hibernação. Para histórico permanente de faturamento/reembolso, plugar um banco de dados.</div>
+        <div class="barra-topo">
+          <span class="atualizado">Atualizado em ${fmtData(m.gerado_em)} · ${m.total_sessoes} sessões no total</span>
+          <button class="btn" onclick="carregar()">↻ Atualizar</button>
+        </div>
+        ${cards}
+        ${semDados ? '<section><div class="vazio">Ainda não há dados. Assim que o funil começar a mandar eventos pra cá, o funil aparece aqui. 🙂</div></section>' : ''}
+        <section>
+          <h2>Desenho do funil</h2>
+          <p class="desc">Do topo (abriu) até o pagamento. A barra afunila conforme perde gente; o <span class="drop">−N</span> mostra quantas você perdeu naquela etapa.</p>
+          <div class="funil-desenho">${desenho}</div>
+        </section>
+        <section>
+          <h2>💳 Pagamento (checkout Guru)</h2>
+          <p class="desc">Pix, cartão, reembolso, faturamento e ticket. Chegam pelo webhook do Guru.</p>
+          ${pagAviso}
+          ${pagCards}
+        </section>
+        <section>
+          <h2>Funil por pergunta (P1 → P15)</h2>
+          <p class="desc">Quantas sessões alcançaram cada pergunta (% sobre quem abriu). Enxerga em qual pergunta o quiz mais perde gente.</p>
+          ${perguntasHtml}
+        </section>
+        <section>
+          <h2>Taxas de conversão</h2>
+          <p class="desc">As passagens mais importantes do funil.</p>
+          ${conv}
+        </section>
+        <div class="grid2">
+          <section>
+            <h2>Distribuição por perfil</h2>
+            <p class="desc">Entre quem chegou ao diagnóstico, qual perfil cada uma recebeu.</p>
+            ${perfilHtml}
+          </section>
+          <section>
+            <h2>Onde as pessoas pararam</h2>
+            <p class="desc">A última etapa que cada sessão que NÃO converteu alcançou.</p>
+            ${abandonoHtml}
+          </section>
+        </div>`;
+    }
+
+    async function carregar() {
+      if (!token) return telaLogin();
+      try {
+        const r = await fetch('/api/stats?token=' + encodeURIComponent(token));
+        if (r.status === 401) return telaLogin('Token inválido. Tente de novo.');
+        if (!r.ok) throw new Error('falha');
+        render(await r.json());
+      } catch (e) {
+        document.getElementById('app').innerHTML = '<div class="vazio">Erro ao carregar as métricas. Tente atualizar.</div>';
+      }
+    }
+
+    carregar();
+  </script>
+</body>
+</html>

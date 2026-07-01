@@ -1,0 +1,15 @@
+{
+  "name": "reconecta-dashboard",
+  "version": "1.0.0",
+  "description": "Dashboard de analytics do funil de quiz da Reconecta (servico paralelo, separado do funil).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

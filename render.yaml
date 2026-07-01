@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: reconecta-dashboard
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    envVars:
+      # Token pra abrir o dashboard: /dashboard?token=SEU_TOKEN
+      - key: DASHBOARD_TOKEN
+        sync: false
+      # (opcional) Segredo pra validar o webhook do Guru: ?token=SEU_SEGREDO
+      - key: GURU_WEBHOOK_TOKEN
+        sync: false
+      # (opcional) Trava o CORS na origem do funil, ex.: https://seu-funil.com
+      - key: CORS_ORIGIN
+        sync: false
