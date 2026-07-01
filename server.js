@@ -99,6 +99,36 @@ app.get('/api/stats', (req, res) => {
   res.json(metricas());
 });
 
+// --- Investimento em anúncios: puxa o gasto do Meta Ads (se configurado) -----
+// O time configura no Render: META_ACCESS_TOKEN e META_AD_ACCOUNT_ID (só os
+// números, com ou sem 'act_'). Opcional: META_DATE_PRESET (default 'this_month').
+// Sem essas variáveis, devolve 'nao_configurado' e o dashboard cai no campo manual.
+app.get('/api/investimento', async (req, res) => {
+  if ((req.query.token || '') !== DASHBOARD_TOKEN) {
+    return res.status(401).json({ erro: 'token invalido' });
+  }
+  const tokenMeta = process.env.META_ACCESS_TOKEN;
+  const conta = process.env.META_AD_ACCOUNT_ID;
+  if (!tokenMeta || !conta) return res.json({ investimento: null, fonte: 'nao_configurado' });
+
+  const preset = req.query.preset || process.env.META_DATE_PRESET || 'this_month';
+  const contaId = String(conta).startsWith('act_') ? conta : 'act_' + conta;
+  const url = `https://graph.facebook.com/v20.0/${contaId}/insights?fields=spend&date_preset=${encodeURIComponent(preset)}&access_token=${encodeURIComponent(tokenMeta)}`;
+  try {
+    const r = await fetch(url);
+    const j = await r.json();
+    if (j.error) return res.json({ investimento: null, fonte: 'erro', erro: j.error.message });
+    const spend = j.data && j.data[0] ? Number(j.data[0].spend) : 0;
+    return res.json({
+      investimento: isNaN(spend) ? 0 : Math.round(spend * 100) / 100,
+      fonte: 'meta',
+      periodo: preset,
+    });
+  } catch (e) {
+    return res.json({ investimento: null, fonte: 'erro', erro: e.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`\n  Reconecta Dashboard (paralelo) rodando em  http://localhost:${PORT}\n`);
 });

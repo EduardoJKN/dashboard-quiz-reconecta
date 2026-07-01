@@ -28,6 +28,13 @@ Sem variáveis de ambiente, o token padrão é `reconecta`.
 - `DASHBOARD_TOKEN` — senha pra abrir o dashboard.
 - `GURU_WEBHOOK_TOKEN` — (opcional) segredo pra validar o webhook do Guru (`?token=...`).
 - `CORS_ORIGIN` — (opcional) trava o CORS na origem do funil (ex.: `https://seu-funil.com`). Default: `*`.
+- `META_ACCESS_TOKEN` + `META_AD_ACCOUNT_ID` — (opcional) puxam o **investimento em anúncios** direto do Meta Ads pra calcular o CPL. Sem elas, o dashboard usa o campo manual. Opcional: `META_DATE_PRESET` (default `this_month`; ex.: `today`, `last_month`, `maximum`).
+
+### Investimento pelo Meta Ads (CPL automático)
+O endpoint `GET /api/investimento?token=...` chama a Graph API do Meta:
+`act_<ID>/insights?fields=spend&date_preset=<preset>`. Requer um **token de acesso do Meta** com permissão `ads_read` (idealmente um token de System User, de longa duração) e o **ID da conta de anúncios**. Com isso, o dashboard puxa o gasto sozinho e mostra "🔗 puxado do Meta". O campo manual continua servindo de ajuste/override.
+
+> Atenção ao período: os leads contados aqui são "desde o último deploy" (disco efêmero no Free). Alinhe o `META_DATE_PRESET` com esse período pra o CPL fazer sentido — ou plugue um banco pra ter histórico fixo.
 
 ## A LIGAÇÃO (o que o time faz depois)
 Este serviço nasce **zerado**. Pra encher de dados:

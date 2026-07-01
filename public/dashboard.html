@@ -68,6 +68,10 @@
     .invest-linha { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; font-size: 13px; }
     .invest-linha input { padding: 7px 10px; border: 1px solid #d8c6a8; border-radius: 8px; font-family: inherit; font-size: 13px; width: 140px; }
     .invest-linha .cpl { color: var(--vinho); font-size: 14px; font-weight: bold; }
+    .invest-fonte { font-size: 12px; color: var(--verde); font-weight: bold; }
+    .cpl-linha { font-size: 12px; font-weight: bold; color: var(--vinho); margin-top: 5px; padding-top: 5px; border-top: 1px solid #efe3cf; }
+    .card.ouro .cpl-linha { color: #fff; border-top-color: rgba(255,255,255,.3); }
+    .card.destaque .cpl-linha { color: var(--dourado); border-top-color: rgba(234,210,160,.3); }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
     @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } .fd-row { grid-template-columns: 120px 1fr 96px; } .linha .nome { width: 130px; } .linha .val { width: 110px; } }
   </style>
@@ -82,6 +86,8 @@
     let token = params.get('token') || '';
     let ultimaMetrica = null;
     let investimento = Number(localStorage.getItem('reconecta_invest') || 0);
+    let investAuto = false;   // true = veio do Meta Ads
+    let investPeriodo = '';
 
     function fmtData(ts) { return new Date(ts).toLocaleString('pt-BR'); }
     function fmtBRL(n) { return (Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -145,16 +151,29 @@
           ? `CPL geral: <span class="cpl">R$ ${fmtBRL(leads ? inv / leads : 0)}</span> · ${leads} leads`
           : `${leads} leads no total`;
       }
+      const elFonte = document.getElementById('invest-fonte');
+      if (elFonte) {
+        elFonte.innerHTML = investAuto
+          ? `🔗 puxado do Meta${investPeriodo ? ' (' + investPeriodo + ')' : ''}`
+          : (inv ? '✍️ valor manual' : '');
+      }
       const cont = document.getElementById('leads-tabela');
       if (!cont) return;
-      if (!lt.tipos.length) {
-        cont.innerHTML = '<div class="vazio">Sem leads classificados ainda.</div>';
-        return;
+      const corTipo = { 'Acima de R$12k/mês': 'ouro', 'Abaixo de R$12k/mês': '', 'Não atua na área': '' };
+      const leadCard = (num, lbl, pctv, cplv, cls) => `
+        <div class="card ${cls || ''}">
+          <div class="num">${num}</div>
+          ${pctv === null ? '' : `<div class="pct">${pctv}%</div>`}
+          <div class="lbl">${lbl}</div>
+          ${cplv === null || cplv === undefined ? '' : `<div class="cpl-linha">CPL R$ ${fmtBRL(cplv)}</div>`}
+        </div>`;
+      let html = leadCard(leads, 'Total de leads', null, null, 'destaque');
+      if (lt.tipos && lt.tipos.length) {
+        html += lt.tipos.map((x) => leadCard(
+          x.count, x.tipo, x.pct, inv ? (x.count ? inv / x.count : 0) : null, corTipo[x.tipo]
+        )).join('');
       }
-      cont.innerHTML = lt.tipos.map((x) => {
-        const cplTxt = inv ? ` · CPL <b>R$ ${fmtBRL(x.count ? inv / x.count : 0)}</b>` : '';
-        return barra(x.tipo, x.pct, `<b>${x.count}</b> · ${x.pct}%${cplTxt}`);
-      }).join('');
+      cont.innerHTML = `<div class="cards" style="margin-bottom:0">${html}</div>`;
     }
 
     function render(m) {
@@ -265,25 +284,26 @@
         ${cards}
         ${semDados ? '<section><div class="vazio">Ainda não há dados. Assim que o funil começar a mandar eventos pra cá, o funil aparece aqui. 🙂</div></section>' : ''}
         <section>
-          <h2>Desenho do funil</h2>
-          <p class="desc">Do topo (abriu) até o pagamento. A barra afunila conforme perde gente; o <span class="drop">−N</span> mostra quantas você perdeu naquela etapa.</p>
-          <div class="funil-desenho">${desenho}</div>
+          <h2>💰 Investimento × leads (custo por lead)</h2>
+          <p class="desc">Quantos leads entraram e de que tipo (pelo faturamento do formulário). Digite o investimento em anúncios pra ver o CPL geral e por tipo.</p>
+          ${leadsAviso}
+          <div class="invest-linha">
+            <label>Investimento em anúncios (R$): <input id="invest" type="number" min="0" step="10" placeholder="puxado do Meta / ou digite" /></label>
+            <span id="invest-fonte" class="invest-fonte"></span>
+            <span id="cpl-geral"></span>
+          </div>
+          <div id="leads-tabela"></div>
         </section>
         <section>
-          <h2>🔗 Captação por link / origem</h2>
+          <h2>🔗 Origem dos leads (por link)</h2>
           <p class="desc">De onde cada sessão veio (primeiro toque): número, % do total e quanto virou lead/compra.</p>
           ${capAviso}
           ${capHtml}
         </section>
         <section>
-          <h2>👥 Captação de leads (qualidade + custo)</h2>
-          <p class="desc">Quantos leads e de que tipo (pelo faturamento do formulário). Digite o investimento em anúncios pra ver o CPL geral e por tipo.</p>
-          ${leadsAviso}
-          <div class="invest-linha">
-            <label>Investimento em anúncios (R$): <input id="invest" type="number" min="0" step="10" placeholder="ex.: 1000" /></label>
-            <span id="cpl-geral"></span>
-          </div>
-          <div id="leads-tabela"></div>
+          <h2>📉 Desenho do funil</h2>
+          <p class="desc">Do topo (abriu) até o pagamento. A barra afunila conforme perde gente; o <span class="drop">−N</span> mostra quantas você perdeu naquela etapa.</p>
+          <div class="funil-desenho">${desenho}</div>
         </section>
         <section>
           <h2>💳 Pagamento (checkout Guru)</h2>
@@ -327,10 +347,27 @@
       renderLeads();
     }
 
+    async function puxarInvestimentoMeta() {
+      try {
+        const r = await fetch('/api/investimento?token=' + encodeURIComponent(token));
+        if (!r.ok) return;
+        const j = await r.json();
+        if (j && j.fonte === 'meta' && j.investimento != null) {
+          investimento = j.investimento;
+          investAuto = true;
+          investPeriodo = j.periodo || '';
+          localStorage.setItem('reconecta_invest', investimento);
+        }
+      } catch (e) { /* sem Meta: segue no valor manual */ }
+    }
+
     async function carregar() {
       if (!token) return telaLogin();
       try {
-        const r = await fetch('/api/stats?token=' + encodeURIComponent(token));
+        const [r] = await Promise.all([
+          fetch('/api/stats?token=' + encodeURIComponent(token)),
+          puxarInvestimentoMeta(),
+        ]);
         if (r.status === 401) return telaLogin('Token inválido. Tente de novo.');
         if (!r.ok) throw new Error('falha');
         render(await r.json());
