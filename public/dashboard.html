@@ -30,6 +30,9 @@
     .card.destaque .num, .card.destaque .lbl { color: var(--dourado); }
     .card.ouro { background: linear-gradient(135deg, #7a5a10, var(--ouro)); }
     .card.ouro .num, .card.ouro .lbl { color: #fff; }
+    .card .pct { font-size: 12px; font-weight: bold; color: var(--verde); margin-top: 2px; }
+    .card.destaque .pct { color: var(--dourado); }
+    .card.ouro .pct { color: #fff; }
 
     section { background: #fff; border: 1px solid #ecddc4; border-radius: 12px; padding: 20px 22px; margin-bottom: 22px; }
     section h2 { color: var(--vinho); font-size: 18px; margin-bottom: 4px; }
@@ -118,6 +121,12 @@
         </div>`;
     }
 
+    // Card com número + percentual (passe pct=null pra esconder o %)
+    function card(num, lbl, pct, cls) {
+      const p = (pct === null || pct === undefined) ? '' : `<div class="pct">${pct}%</div>`;
+      return `<div class="card ${cls || ''}"><div class="num">${num}</div>${p}<div class="lbl">${lbl}</div></div>`;
+    }
+
     function render(m) {
       const t = m.totais;
       const c = m.conversao;
@@ -126,16 +135,18 @@
       const base = stage(m, 'visita').sessoes || 1;
       const pctB = (n) => (base ? Math.round((n / base) * 1000) / 10 : 0);
 
-      // ---- Cards de números-chave ----
+      // ---- Cards de números-chave (número + %) ----
+      const bV = t.visitas || 1;
+      const pctV = (n) => Math.round((n / bV) * 1000) / 10;
       const cards = `
         <div class="cards">
-          <div class="card"><div class="num">${t.visitas}</div><div class="lbl">Abriram o quiz</div></div>
-          <div class="card"><div class="num">${t.iniciaram}</div><div class="lbl">Começaram</div></div>
-          <div class="card"><div class="num">${t.leads}</div><div class="lbl">Leads (formulário)</div></div>
-          <div class="card"><div class="num">${t.resultados}</div><div class="lbl">Viram o diagnóstico</div></div>
-          <div class="card"><div class="num">${t.compras}</div><div class="lbl">Clicaram comprar</div></div>
-          <div class="card ouro"><div class="num">${pg.pagos_total || 0}</div><div class="lbl">Pagos (Pix + cartão)</div></div>
-          <div class="card destaque"><div class="num">${c.geral}%</div><div class="lbl">Conversão geral<br>(abriu → PDF)</div></div>
+          ${card(t.visitas, 'Abriram o quiz', 100)}
+          ${card(t.iniciaram, 'Começaram', pctV(t.iniciaram))}
+          ${card(t.leads, 'Leads (formulário)', pctV(t.leads))}
+          ${card(t.resultados, 'Viram o diagnóstico', pctV(t.resultados))}
+          ${card(t.compras, 'Clicaram comprar', pctV(t.compras))}
+          ${card(pg.pagos_total || 0, 'Pagos (Pix + cartão)', pctV(pg.pagos_total || 0), 'ouro')}
+          ${card(c.geral + '%', 'Conversão geral<br>(abriu → PDF)', null, 'destaque')}
         </div>`;
 
       // ---- Desenho do funil (sessões) + pagamento ----
@@ -149,17 +160,31 @@
       desenho += fdRow('Pagou no cartão', pg.cartao || 0, pctB(pg.cartao || 0), 0, true);
       if (pg.boleto) desenho += fdRow('Pagou no boleto', pg.boleto, pctB(pg.boleto), 0, true);
 
-      // ---- Bloco de pagamento ----
+      // ---- Bloco de pagamento (número + % sobre o total pago) ----
+      const pt = pg.pagos_total || 0;
+      const pctP = (n) => (pt ? Math.round((n / pt) * 1000) / 10 : 0);
       const pagCards = `
         <div class="cards" style="margin-bottom:0">
-          <div class="card"><div class="num">${pg.pix || 0}</div><div class="lbl">Pagos no Pix</div></div>
-          <div class="card"><div class="num">${pg.cartao || 0}</div><div class="lbl">Pagos no cartão</div></div>
-          <div class="card"><div class="num">${pg.pagos_total || 0}</div><div class="lbl">Total pago</div></div>
-          <div class="card"><div class="num">${pg.reembolsos || 0}</div><div class="lbl">Reembolsos</div></div>
-          <div class="card"><div class="num">${pg.taxa_reembolso || 0}%</div><div class="lbl">Taxa de reembolso</div></div>
-          <div class="card ouro"><div class="num">R$ ${fmtBRL(pg.faturamento_liquido || 0)}</div><div class="lbl">Faturamento líquido</div></div>
-          <div class="card"><div class="num">R$ ${fmtBRL(pg.ticket || 0)}</div><div class="lbl">Ticket médio</div></div>
+          ${card(pg.pix || 0, 'Pagos no Pix', pctP(pg.pix || 0))}
+          ${card(pg.cartao || 0, 'Pagos no cartão', pctP(pg.cartao || 0))}
+          ${card(pg.pagos_total || 0, 'Total pago', null)}
+          ${card(pg.reembolsos || 0, 'Reembolsos', pg.taxa_reembolso || 0)}
+          ${card((pg.taxa_reembolso || 0) + '%', 'Taxa de reembolso', null)}
+          ${card('R$ ' + fmtBRL(pg.faturamento_liquido || 0), 'Faturamento líquido', null, 'ouro')}
+          ${card('R$ ' + fmtBRL(pg.ticket || 0), 'Ticket médio', null)}
         </div>`;
+
+      // ---- Captação por link / origem ----
+      const cap = m.captacao || { tem_origem: false, fontes: [] };
+      const capAviso = cap.tem_origem
+        ? ''
+        : `<div class="aviso">⏳ As origens ainda não estão chegando. Quando o time incluir a origem/UTM do link no evento de visita (ex.: <code>utm_source=instagram-bio</code>), cada link aparece aqui com número, % e conversão.</div>`;
+      const capHtml = cap.fontes.length
+        ? cap.fontes.map((f) => barra(
+            f.origem, f.pct,
+            `<b>${f.visitas}</b> · ${f.pct}% · ${f.leads} leads (${f.conv_lead}%) · ${f.compras} compras`
+          )).join('')
+        : '<div class="vazio">Sem visitas registradas ainda.</div>';
       const pagAviso = pg.conectado
         ? ''
         : `<div class="aviso">⏳ Nenhum pagamento recebido ainda. Assim que o time apontar o webhook do Guru pra <code>/api/webhook/pagamento</code>, Pix, cartão e reembolso aparecem aqui sozinhos.</div>`;
@@ -206,6 +231,12 @@
           <h2>Desenho do funil</h2>
           <p class="desc">Do topo (abriu) até o pagamento. A barra afunila conforme perde gente; o <span class="drop">−N</span> mostra quantas você perdeu naquela etapa.</p>
           <div class="funil-desenho">${desenho}</div>
+        </section>
+        <section>
+          <h2>🔗 Captação por link / origem</h2>
+          <p class="desc">De onde cada sessão veio (primeiro toque): número, % do total e quanto virou lead/compra.</p>
+          ${capAviso}
+          ${capHtml}
         </section>
         <section>
           <h2>💳 Pagamento (checkout Guru)</h2>

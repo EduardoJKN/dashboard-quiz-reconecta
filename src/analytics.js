@@ -108,9 +108,14 @@ function metricas() {
   for (const ev of eventos) {
     const key = tipoParaKey(ev);
     if (indexDe[key] == null) continue; // ignora tipos fora do funil (ex.: pago, reembolso)
-    const s = (sessoes[ev.sessao] = sessoes[ev.sessao] || { keys: new Set(), perfil: null });
+    const s = (sessoes[ev.sessao] = sessoes[ev.sessao] || { keys: new Set(), perfil: null, origem: null });
     s.keys.add(key);
     if (key === 'resultado' && ev.dados && ev.dados.perfil) s.perfil = ev.dados.perfil;
+    // Origem/captacao (primeiro toque): o time manda no evento 'visita'
+    if (key === 'visita' && !s.origem) {
+      const d = ev.dados || {};
+      s.origem = d.origem || d.link || d.utm_campaign || d.utm_source || d.ref || null;
+    }
   }
 
   const lista = Object.values(sessoes);
@@ -222,6 +227,33 @@ function metricas() {
     ticket: pagosTotal ? Math.round((fatBruto / pagosTotal) * 100) / 100 : 0,
   };
 
+  // --- Captacao por link/origem (primeiro toque) -----------------------------
+  // Origem vem do evento 'visita' (dados.origem / utm_source / utm_campaign / link).
+  // Enquanto o time nao enviar, tudo cai em "Sem origem (direto)".
+  const idxLead = indexDe['lead'];
+  const idxCompra = indexDe['compra'];
+  const capMap = {};
+  let temOrigem = false;
+  for (const s of lista) {
+    if (s.origem) temOrigem = true;
+    const chave = s.origem || 'Sem origem (direto)';
+    const cc = (capMap[chave] = capMap[chave] || { origem: chave, visitas: 0, leads: 0, compras: 0 });
+    cc.visitas++;
+    if (s.maxIdx >= idxLead) cc.leads++;
+    if (s.maxIdx >= idxCompra) cc.compras++;
+  }
+  const captacao = {
+    tem_origem: temOrigem,
+    fontes: Object.values(capMap)
+      .map((cc) => ({
+        ...cc,
+        pct: pct(cc.visitas, totalSessoes),
+        conv_lead: pct(cc.leads, cc.visitas),
+        conv_compra: pct(cc.compras, cc.visitas),
+      }))
+      .sort((a, b) => b.visitas - a.visitas),
+  };
+
   const conversao = {
     visita_resultado: pct(totais.resultados, totais.visitas),
     resultado_compra: pct(totais.compras, totais.resultados),
@@ -236,6 +268,7 @@ function metricas() {
     totais,
     conversao,
     pagamento,
+    captacao,
     funil,
     abandono: abandono.filter((a) => a.count > 0).sort((a, b) => b.count - a.count),
     perfis,
