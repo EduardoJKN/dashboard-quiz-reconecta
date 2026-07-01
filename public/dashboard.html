@@ -65,6 +65,9 @@
     .login { max-width: 360px; margin: 60px auto; text-align: center; }
     .login input { width: 100%; padding: 11px; border: 1px solid #d8c6a8; border-radius: 8px; font-family: inherit; margin: 12px 0; font-size: 14px; }
     .aviso { background: #fff7e8; border: 1px solid #f0d9a8; color: #8a6d2a; font-size: 12px; border-radius: 8px; padding: 10px 14px; margin-bottom: 22px; }
+    .invest-linha { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; font-size: 13px; }
+    .invest-linha input { padding: 7px 10px; border: 1px solid #d8c6a8; border-radius: 8px; font-family: inherit; font-size: 13px; width: 140px; }
+    .invest-linha .cpl { color: var(--vinho); font-size: 14px; font-weight: bold; }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
     @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } .fd-row { grid-template-columns: 120px 1fr 96px; } .linha .nome { width: 130px; } .linha .val { width: 110px; } }
   </style>
@@ -77,6 +80,8 @@
   <script>
     const params = new URLSearchParams(location.search);
     let token = params.get('token') || '';
+    let ultimaMetrica = null;
+    let investimento = Number(localStorage.getItem('reconecta_invest') || 0);
 
     function fmtData(ts) { return new Date(ts).toLocaleString('pt-BR'); }
     function fmtBRL(n) { return (Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -127,7 +132,33 @@
       return `<div class="card ${cls || ''}"><div class="num">${num}</div>${p}<div class="lbl">${lbl}</div></div>`;
     }
 
+    // Leads por tipo + CPL (calculado com o investimento digitado)
+    function renderLeads() {
+      const m = ultimaMetrica;
+      if (!m) return;
+      const lt = m.leads_tipos || { total: 0, tipos: [] };
+      const leads = (m.totais && m.totais.leads) || 0;
+      const inv = Number(investimento) || 0;
+      const elCpl = document.getElementById('cpl-geral');
+      if (elCpl) {
+        elCpl.innerHTML = inv
+          ? `CPL geral: <span class="cpl">R$ ${fmtBRL(leads ? inv / leads : 0)}</span> · ${leads} leads`
+          : `${leads} leads no total`;
+      }
+      const cont = document.getElementById('leads-tabela');
+      if (!cont) return;
+      if (!lt.tipos.length) {
+        cont.innerHTML = '<div class="vazio">Sem leads classificados ainda.</div>';
+        return;
+      }
+      cont.innerHTML = lt.tipos.map((x) => {
+        const cplTxt = inv ? ` · CPL <b>R$ ${fmtBRL(x.count ? inv / x.count : 0)}</b>` : '';
+        return barra(x.tipo, x.pct, `<b>${x.count}</b> · ${x.pct}%${cplTxt}`);
+      }).join('');
+    }
+
     function render(m) {
+      ultimaMetrica = m;
       const t = m.totais;
       const c = m.conversao;
       const pg = m.pagamento || {};
@@ -185,6 +216,12 @@
             `<b>${f.visitas}</b> · ${f.pct}% · ${f.leads} leads (${f.conv_lead}%) · ${f.compras} compras`
           )).join('')
         : '<div class="vazio">Sem visitas registradas ainda.</div>';
+
+      // ---- Captação de leads (qualidade + custo) ----
+      const lt = m.leads_tipos || { classificado: false };
+      const leadsAviso = lt.classificado
+        ? ''
+        : `<div class="aviso">⏳ Os tipos de lead ainda não estão chegando. Quando o time enviar o <code>faturamento</code> do formulário no evento de lead, aparecem aqui: acima de 12k, abaixo de 12k e não atua, com % e CPL.</div>`;
       const pagAviso = pg.conectado
         ? ''
         : `<div class="aviso">⏳ Nenhum pagamento recebido ainda. Assim que o time apontar o webhook do Guru pra <code>/api/webhook/pagamento</code>, Pix, cartão e reembolso aparecem aqui sozinhos.</div>`;
@@ -239,6 +276,16 @@
           ${capHtml}
         </section>
         <section>
+          <h2>👥 Captação de leads (qualidade + custo)</h2>
+          <p class="desc">Quantos leads e de que tipo (pelo faturamento do formulário). Digite o investimento em anúncios pra ver o CPL geral e por tipo.</p>
+          ${leadsAviso}
+          <div class="invest-linha">
+            <label>Investimento em anúncios (R$): <input id="invest" type="number" min="0" step="10" placeholder="ex.: 1000" /></label>
+            <span id="cpl-geral"></span>
+          </div>
+          <div id="leads-tabela"></div>
+        </section>
+        <section>
           <h2>💳 Pagamento (checkout Guru)</h2>
           <p class="desc">Pix, cartão, reembolso, faturamento e ticket. Chegam pelo webhook do Guru.</p>
           ${pagAviso}
@@ -266,6 +313,18 @@
             ${abandonoHtml}
           </section>
         </div>`;
+
+      // Campo de investimento -> CPL ao vivo (sem refazer a pagina inteira)
+      const inp = document.getElementById('invest');
+      if (inp) {
+        inp.value = investimento || '';
+        inp.oninput = () => {
+          investimento = Number(inp.value) || 0;
+          localStorage.setItem('reconecta_invest', investimento);
+          renderLeads();
+        };
+      }
+      renderLeads();
     }
 
     async function carregar() {

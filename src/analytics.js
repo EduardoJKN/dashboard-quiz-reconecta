@@ -56,6 +56,16 @@ const PERFIL_EMOJI = {
   'O Fantasma do Feed': '👻',
 };
 
+// Agrupa o faturamento (do formulario do quiz) em 3 baldes de qualidade de lead.
+// Os valores brutos vem do select 'faturamento' da captura.
+function bucketFaturamento(v) {
+  if (!v) return null;
+  if (v === 'comecar') return 'Não atua na área';
+  if (v === 'ate_5k' || v === '5k_12k') return 'Abaixo de R$12k/mês';
+  if (v === '13k_30k' || v === '31k_70k' || v === 'acima_71k') return 'Acima de R$12k/mês';
+  return 'Outro';
+}
+
 // --- Ordem das etapas do funil (sessões) -------------------------------------
 function etapasFunil() {
   const et = [
@@ -116,6 +126,8 @@ function metricas() {
       const d = ev.dados || {};
       s.origem = d.origem || d.link || d.utm_campaign || d.utm_source || d.ref || null;
     }
+    // Tipo de lead: o time manda o 'faturamento' do formulario no evento 'lead'
+    if (key === 'lead' && ev.dados && ev.dados.faturamento) s.faturamento = ev.dados.faturamento;
   }
 
   const lista = Object.values(sessoes);
@@ -254,6 +266,27 @@ function metricas() {
       .sort((a, b) => b.visitas - a.visitas),
   };
 
+  // --- Qualidade de lead (por faturamento do formulario) ---------------------
+  // O CPL (custo por lead) e calculado no dashboard, com o investimento digitado.
+  const leadTipoMap = {};
+  let temTipoLead = false;
+  let leadsClassificados = 0;
+  for (const s of lista) {
+    if (!s.faturamento) continue;
+    temTipoLead = true;
+    const b = bucketFaturamento(s.faturamento) || 'Outro';
+    leadTipoMap[b] = (leadTipoMap[b] || 0) + 1;
+    leadsClassificados++;
+  }
+  const ORDEM_TIPO = ['Acima de R$12k/mês', 'Abaixo de R$12k/mês', 'Não atua na área', 'Outro'];
+  const leads_tipos = {
+    classificado: temTipoLead,
+    total: leadsClassificados,
+    tipos: Object.entries(leadTipoMap)
+      .map(([tipo, count]) => ({ tipo, count, pct: pct(count, leadsClassificados) }))
+      .sort((a, b) => ORDEM_TIPO.indexOf(a.tipo) - ORDEM_TIPO.indexOf(b.tipo)),
+  };
+
   const conversao = {
     visita_resultado: pct(totais.resultados, totais.visitas),
     resultado_compra: pct(totais.compras, totais.resultados),
@@ -269,6 +302,7 @@ function metricas() {
     conversao,
     pagamento,
     captacao,
+    leads_tipos,
     funil,
     abandono: abandono.filter((a) => a.count > 0).sort((a, b) => b.count - a.count),
     perfis,
