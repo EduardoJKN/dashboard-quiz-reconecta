@@ -48,12 +48,24 @@ const SQL_ORIGEM = `
   ORDER BY sessoes DESC
 `;
 
+// Alcance por pergunta: quantas sessoes chegaram >= P1, >= P2, ..., >= P15.
+const SQL_PERGUNTAS_ALCANCE = `
+  SELECT
+    gs.n AS pergunta,
+    COUNT(*) FILTER (WHERE q.max_pergunta >= gs.n)::int AS sessoes
+  FROM generate_series(1, 15) AS gs(n)
+  CROSS JOIN funil_quiz.quiz_sessoes q
+  GROUP BY gs.n
+  ORDER BY gs.n
+`;
+
 async function carregarFunilQuiz() {
-  const [resumo, aband, abandForm, origem] = await Promise.all([
+  const [resumo, aband, abandForm, origem, perguntas] = await Promise.all([
     query(SQL_RESUMO),
     query(SQL_ABANDONO_PERGUNTA),
     query(SQL_ABANDONO_FORM),
     query(SQL_ORIGEM),
+    query(SQL_PERGUNTAS_ALCANCE),
   ]);
   const r = resumo.rows[0] || {};
   const abandonoForm = (abandForm.rows[0] && abandForm.rows[0].abandono_formulario) || 0;
@@ -65,7 +77,12 @@ async function carregarFunilQuiz() {
       resultados: r.terminaram_quiz || 0,
       compras: r.clicaram_comprar || 0,
     },
+    // Para o array 'funil': quantas sessoes chegaram na etapa 'lead'/'captura'
+    // (usado no desenho do funil — nao substitui totais.leads oficial).
+    chegaram_form: r.chegaram_form || 0,
+    viraram_lead: r.viraram_lead || 0,
     perguntas_abandono: aband.rows, // [{ parou_na_pergunta, sessoes }]
+    perguntas_alcance: perguntas.rows, // [{ pergunta, sessoes }]
     abandono_formulario: abandonoForm,
     origens: origem.rows,           // [{ origem, sessoes, leads, compras }]
   };

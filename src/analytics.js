@@ -320,6 +320,7 @@ async function metricas() {
   let totalSessoesFinal = totalSessoes;
   let captacaoFinal = captacao;
   let abandonoFinal = null; // se null, cai no fallback local no return
+  let funilFinal = null;    // idem
   if (process.env.DATABASE_URL) {
     try {
       const fq = await carregarFunilQuiz();
@@ -328,6 +329,42 @@ async function metricas() {
       totais.iniciaram = fq.totais.iniciaram;
       totais.resultados = fq.totais.resultados;
       totais.compras = fq.totais.compras;
+
+      // funil: monta o array na mesma forma do local
+      // ({ key, label, sessoes, pct_topo, pct_etapa, abandonaram }). O "lead"
+      // aqui usa virou_lead da tabela de sessoes (visualizacao de funil), NAO
+      // substitui o card oficial de leads (esse vem de lp_form.leads).
+      const alcancePergunta = {};
+      for (const r of fq.perguntas_alcance) alcancePergunta[r.pergunta] = r.sessoes;
+      const funilCru = [
+        { key: 'visita',    label: 'Abriu o quiz',         sessoes: fq.totais.visitas },
+        { key: 'iniciou',   label: 'Começou a responder',  sessoes: fq.totais.iniciaram },
+      ];
+      for (let n = 1; n <= 15; n++) {
+        funilCru.push({
+          key: 'p' + n,
+          label: LABEL_PERGUNTA[n],
+          sessoes: alcancePergunta[n] || 0,
+        });
+      }
+      funilCru.push({ key: 'captura',   label: 'Chegou no formulário', sessoes: fq.chegaram_form });
+      funilCru.push({ key: 'lead',      label: 'Preencheu os dados',   sessoes: fq.viraram_lead });
+      funilCru.push({ key: 'resultado', label: 'Viu o diagnóstico',    sessoes: fq.totais.resultados });
+      funilCru.push({ key: 'compra',    label: 'Clicou em comprar',    sessoes: fq.totais.compras });
+      funilCru.push({ key: 'pdf',       label: 'PDF gerado',           sessoes: 0 });
+
+      const baseTopo = funilCru[0].sessoes || 1;
+      funilFinal = funilCru.map((f, i) => {
+        const pct_topo = Math.round((f.sessoes / baseTopo) * 1000) / 10;
+        if (i === 0) return { ...f, pct_topo: 100, pct_etapa: 100, abandonaram: 0 };
+        const ant = funilCru[i - 1].sessoes || 1;
+        return {
+          ...f,
+          pct_topo,
+          pct_etapa: Math.round((f.sessoes / ant) * 1000) / 10,
+          abandonaram: Math.max(0, funilCru[i - 1].sessoes - f.sessoes),
+        };
+      });
 
       // captacao a partir das origens (utm_source)
       const semOrigemChave = 'Sem origem';
@@ -392,7 +429,7 @@ async function metricas() {
     pagamento,
     captacao: captacaoFinal,
     leads_tipos,
-    funil,
+    funil: funilFinal || funil,
     abandono: abandonoFinal || abandono.filter((a) => a.count > 0).sort((a, b) => b.count - a.count),
     perfis,
   };
