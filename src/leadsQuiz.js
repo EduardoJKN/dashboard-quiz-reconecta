@@ -8,10 +8,14 @@
 // ============================================================================
 const { query } = require('./db');
 
+// Regra global de exclusao de testes/internos: emails com 'teste' ou 'reconecta'
+// nao entram nos calculos do dashboard.
 const SQL = `
   SELECT COUNT(*)::int AS total
   FROM lp_form.leads
   WHERE UPPER(TRIM(COALESCE(funil_origem, ''))) = 'QUIZ'
+    AND COALESCE(email, '') NOT ILIKE '%teste%'
+    AND COALESCE(email, '') NOT ILIKE '%reconecta%'
 `;
 
 async function carregarLeads() {

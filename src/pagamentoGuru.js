@@ -23,6 +23,9 @@ const STATUS_PAGOS = new Set([
 
 const REGEX_REEMBOLSO = /(refund|refunded|reembolso|reimbursed|chargeback|estorno)/i;
 
+// Regra global de exclusao de testes/internos: pagamentos com customer_email
+// contendo 'teste' ou 'reconecta' nao entram em nenhum contador — isso reflete
+// automaticamente em pagos_total, faturamento, ticket e totais.pdfs.
 const SQL = `
   SELECT
     id,
@@ -36,6 +39,8 @@ const SQL = `
     guru_confirmed_at,
     received_at
   FROM financeiro.guru_log_quiz
+  WHERE COALESCE(customer_email, '') NOT ILIKE '%teste%'
+    AND COALESCE(customer_email, '') NOT ILIKE '%reconecta%'
   ORDER BY COALESCE(guru_confirmed_at, guru_created_at, received_at) ASC
 `;
 
