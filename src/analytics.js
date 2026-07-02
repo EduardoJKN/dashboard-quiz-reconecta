@@ -10,6 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const { carregarPagamento } = require('./pagamentoGuru');
+const { carregarLeads } = require('./leadsQuiz');
 
 const DIR = path.join(__dirname, '..', 'data');
 const ARQ = path.join(DIR, 'eventos.jsonl');
@@ -199,6 +200,16 @@ async function metricas() {
     compras: get('compra'),
     pdfs: get('pdf'),
   };
+
+  // Se tiver Postgres, o card "Leads (formulario)" vem de lp_form.leads
+  // (funil_origem = 'QUIZ'). Se falhar, mantem o valor do funil local.
+  if (process.env.DATABASE_URL) {
+    try {
+      totais.leads = await carregarLeads();
+    } catch (e) {
+      console.error('[analytics] falha ao ler leads do Postgres, usando fallback local:', e.message);
+    }
+  }
 
   // --- Pagamento (eventos 'pago'/'reembolso' vindos do webhook do Guru) -------
   // Dedup por id de transacao: o Guru pode reenviar o mesmo evento varias vezes.
