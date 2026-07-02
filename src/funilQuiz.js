@@ -10,15 +10,17 @@
 // ============================================================================
 const { query } = require('./db');
 
-// Regra global de exclusao de testes/internos: sessoes com email contendo
-// 'teste' ou 'reconecta' nao entram nos calculos do dashboard. Aplicada via
-// CTE 'base' em TODAS as queries pra nao esquecer nenhum bloco.
+// Regra global de exclusao de testes/internos + filtro de periodo aplicados
+// em UMA CTE 'base' que serve pra todas as queries. Assim ninguem escapa.
+// Datas parametrizadas ($1 = inicio, $2 = fim).
 const BASE_CTE = `
   WITH base AS (
     SELECT *
     FROM funil_quiz.quiz_sessoes
     WHERE COALESCE(email, '') NOT ILIKE '%teste%'
       AND COALESCE(email, '') NOT ILIKE '%reconecta%'
+      AND COALESCE(primeiro_evento, ultimo_evento) >= $1::date
+      AND COALESCE(primeiro_evento, ultimo_evento) <  ($2::date + interval '1 day')
   )
 `;
 
@@ -90,14 +92,15 @@ const SQL_PERFIS = `
   ORDER BY count DESC
 `;
 
-async function carregarFunilQuiz() {
+async function carregarFunilQuiz({ inicio, fim } = {}) {
+  const params = [inicio, fim];
   const [resumo, aband, abandForm, origem, perguntas, perfis] = await Promise.all([
-    query(SQL_RESUMO),
-    query(SQL_ABANDONO_PERGUNTA),
-    query(SQL_ABANDONO_FORM),
-    query(SQL_ORIGEM),
-    query(SQL_PERGUNTAS_ALCANCE),
-    query(SQL_PERFIS),
+    query(SQL_RESUMO, params),
+    query(SQL_ABANDONO_PERGUNTA, params),
+    query(SQL_ABANDONO_FORM, params),
+    query(SQL_ORIGEM, params),
+    query(SQL_PERGUNTAS_ALCANCE, params),
+    query(SQL_PERFIS, params),
   ]);
   const r = resumo.rows[0] || {};
   const abandonoForm = (abandForm.rows[0] && abandForm.rows[0].abandono_formulario) || 0;

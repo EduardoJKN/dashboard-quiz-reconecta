@@ -110,7 +110,7 @@ function lerEventos() {
 }
 
 // --- Agrega tudo num objeto pro dashboard ------------------------------------
-async function metricas() {
+async function metricas({ inicio, fim } = {}) {
   const eventos = lerEventos();
   const etapas = etapasFunil();
   const indexDe = {};
@@ -206,7 +206,7 @@ async function metricas() {
   // (funil_origem = 'QUIZ'). Se falhar, mantem o valor do funil local.
   if (process.env.DATABASE_URL) {
     try {
-      totais.leads = await carregarLeads();
+      totais.leads = await carregarLeads({ inicio, fim });
     } catch (e) {
       console.error('[analytics] falha ao ler leads do Postgres, usando fallback local:', e.message);
     }
@@ -257,7 +257,7 @@ async function metricas() {
   let pagamento = pagamentoLocal;
   if (process.env.DATABASE_URL) {
     try {
-      pagamento = await carregarPagamento();
+      pagamento = await carregarPagamento({ inicio, fim });
     } catch (e) {
       console.error('[analytics] falha ao ler pagamento do Postgres, usando fallback local:', e.message);
       pagamento = pagamentoLocal;
@@ -330,7 +330,7 @@ async function metricas() {
   let perfisFinal = null;   // idem
   if (process.env.DATABASE_URL) {
     try {
-      const fq = await carregarFunilQuiz();
+      const fq = await carregarFunilQuiz({ inicio, fim });
       totalSessoesFinal = fq.total_sessoes;
       totais.visitas = fq.totais.visitas;
       totais.iniciaram = fq.totais.iniciaram;
@@ -445,6 +445,7 @@ async function metricas() {
 
   return {
     gerado_em: Date.now(),
+    periodo: { inicio, fim },
     total_sessoes: totalSessoesFinal,
     totais,
     conversao,

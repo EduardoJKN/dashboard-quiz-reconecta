@@ -23,9 +23,9 @@ const STATUS_PAGOS = new Set([
 
 const REGEX_REEMBOLSO = /(refund|refunded|reembolso|reimbursed|chargeback|estorno)/i;
 
-// Regra global de exclusao de testes/internos: pagamentos com customer_email
-// contendo 'teste' ou 'reconecta' nao entram em nenhum contador — isso reflete
-// automaticamente em pagos_total, faturamento, ticket e totais.pdfs.
+// Regra global de exclusao de testes/internos + filtro de periodo por
+// COALESCE(guru_confirmed_at, guru_created_at, received_at). Datas
+// parametrizadas ($1 = inicio, $2 = fim).
 const SQL = `
   SELECT
     id,
@@ -41,6 +41,8 @@ const SQL = `
   FROM financeiro.guru_log_quiz
   WHERE COALESCE(customer_email, '') NOT ILIKE '%teste%'
     AND COALESCE(customer_email, '') NOT ILIKE '%reconecta%'
+    AND COALESCE(guru_confirmed_at, guru_created_at, received_at) >= $1::date
+    AND COALESCE(guru_confirmed_at, guru_created_at, received_at) <  ($2::date + interval '1 day')
   ORDER BY COALESCE(guru_confirmed_at, guru_created_at, received_at) ASC
 `;
 
@@ -63,8 +65,8 @@ function pct(a, b) {
   return b ? Math.round((a / b) * 1000) / 10 : 0;
 }
 
-async function carregarPagamento() {
-  const { rows } = await query(SQL);
+async function carregarPagamento({ inicio, fim } = {}) {
+  const { rows } = await query(SQL, [inicio, fim]);
 
   const vistoPago = new Set();
   const vistoReemb = new Set();

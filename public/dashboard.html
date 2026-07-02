@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex" />
   <title>Dashboard · Diagnóstico Reconecta</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/l10n/pt.js"></script>
   <style>
     :root {
       --vinho: #5c1a1a; --vinho2: #431210; --dourado: #ead2a0; --ouro: #b8860b;
@@ -69,6 +72,10 @@
     .invest-linha input { padding: 7px 10px; border: 1px solid #d8c6a8; border-radius: 8px; font-family: inherit; font-size: 13px; width: 140px; }
     .invest-linha .cpl { color: var(--vinho); font-size: 14px; font-weight: bold; }
     .invest-fonte { font-size: 12px; color: var(--verde); font-weight: bold; }
+    .invest-pill { display: inline-block; padding: 7px 12px; background: #f5efe3; border: 1px solid #d8c6a8; border-radius: 8px; font-weight: bold; color: var(--vinho); font-size: 14px; }
+    .periodo-linha { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 16px; font-size: 13px; color: #6b5e57; }
+    .periodo-linha input.periodo-input,
+    .periodo-linha input[type="date"] { padding: 6px 9px; border: 1px solid #d8c6a8; border-radius: 8px; font-family: inherit; font-size: 13px; background: #fff; width: 120px; }
     .cpl-linha { font-size: 12px; font-weight: bold; color: var(--vinho); margin-top: 5px; padding-top: 5px; border-top: 1px solid #efe3cf; }
     .card.ouro .cpl-linha { color: #fff; border-top-color: rgba(255,255,255,.3); }
     .card.destaque .cpl-linha { color: var(--dourado); border-top-color: rgba(234,210,160,.3); }
@@ -91,6 +98,61 @@
 
     function fmtData(ts) { return new Date(ts).toLocaleString('pt-BR'); }
     function fmtBRL(n) { return (Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+    // --- Periodo (filtro geral) ---
+    function _pad(n) { return String(n).padStart(2, '0'); }
+    function _ymd(d) { return `${d.getFullYear()}-${_pad(d.getMonth()+1)}-${_pad(d.getDate())}`; }
+    function _isYmd(s) { return /^\d{4}-\d{2}-\d{2}$/.test(String(s||'')); }
+    function periodoDefault() {
+      const now = new Date();
+      return { inicio: _ymd(new Date(now.getFullYear(), now.getMonth(), 1)), fim: _ymd(now) };
+    }
+    const _defP = periodoDefault();
+    let periodoInicio = _isYmd(params.get('inicio')) ? params.get('inicio')
+      : (_isYmd(localStorage.getItem('reconecta_inicio')) ? localStorage.getItem('reconecta_inicio') : _defP.inicio);
+    let periodoFim = _isYmd(params.get('fim')) ? params.get('fim')
+      : (_isYmd(localStorage.getItem('reconecta_fim')) ? localStorage.getItem('reconecta_fim') : _defP.fim);
+    function periodoQuery() {
+      return `&inicio=${encodeURIComponent(periodoInicio)}&fim=${encodeURIComponent(periodoFim)}`;
+    }
+    // flatpickr: cria (ou reaproveita) instancias em pt-BR. Formato visual
+    // dd/mm/aaaa via altInput; valor real permanece YYYY-MM-DD.
+    let _fpInicio = null, _fpFim = null;
+    function sincronizarPeriodoInputs() {
+      const i = document.getElementById('periodo-inicio');
+      const f = document.getElementById('periodo-fim');
+      if (!i || !f || typeof flatpickr === 'undefined') {
+        if (i) i.value = periodoInicio;
+        if (f) f.value = periodoFim;
+        return;
+      }
+      const cfg = {
+        dateFormat: 'Y-m-d',
+        altInput: true,
+        altFormat: 'd/m/Y',
+        allowInput: true,
+        locale: (flatpickr.l10ns && flatpickr.l10ns.pt) || undefined,
+      };
+      if (_fpInicio) _fpInicio.destroy();
+      if (_fpFim) _fpFim.destroy();
+      _fpInicio = flatpickr(i, cfg);
+      _fpFim = flatpickr(f, cfg);
+      _fpInicio.setDate(periodoInicio, false);
+      _fpFim.setDate(periodoFim, false);
+    }
+    function aplicarPeriodo() {
+      const i = _fpInicio ? _fpInicio.input.value : document.getElementById('periodo-inicio').value;
+      const f = _fpFim ? _fpFim.input.value : document.getElementById('periodo-fim').value;
+      if (!_isYmd(i) || !_isYmd(f)) return;
+      periodoInicio = i; periodoFim = f;
+      localStorage.setItem('reconecta_inicio', i);
+      localStorage.setItem('reconecta_fim', f);
+      const url = new URL(location.href);
+      url.searchParams.set('inicio', i);
+      url.searchParams.set('fim', f);
+      history.replaceState(null, '', url.toString());
+      carregar();
+    }
 
     function telaLogin(msg) {
       document.getElementById('app').innerHTML = `
@@ -155,8 +217,10 @@
       if (elFonte) {
         elFonte.innerHTML = investAuto
           ? `🔗 puxado do Meta${investPeriodo ? ' (' + investPeriodo + ')' : ''}`
-          : (inv ? '✍️ valor manual' : '');
+          : '';
       }
+      const elVal = document.getElementById('invest-display');
+      if (elVal) elVal.textContent = 'R$ ' + fmtBRL(inv);
       const cont = document.getElementById('leads-tabela');
       if (!cont) return;
       const corTipo = { 'Acima de R$12k/mês': 'ouro', 'Abaixo de R$12k/mês': '', 'Não atua na área': '' };
@@ -276,10 +340,15 @@
           <h1>📊 Dashboard · Diagnóstico Reconecta</h1>
           <p>Funil completo do quiz + pagamento (Guru) · serviço paralelo</p>
         </header>
-        <div class="aviso">⚠️ No plano Free do Render os dados zeram a cada redeploy/hibernação. Para histórico permanente de faturamento/reembolso, plugar um banco de dados.</div>
         <div class="barra-topo">
           <span class="atualizado">Atualizado em ${fmtData(m.gerado_em)} · ${m.total_sessoes} sessões no total</span>
-          <button class="btn" onclick="carregar()">↻ Atualizar</button>
+        </div>
+        <div class="periodo-linha">
+          <span>Período:</span>
+          <input type="text" id="periodo-inicio" class="periodo-input" />
+          <span>até</span>
+          <input type="text" id="periodo-fim" class="periodo-input" />
+          <button class="btn" onclick="aplicarPeriodo()">Aplicar</button>
         </div>
         ${cards}
         ${semDados ? '<section><div class="vazio">Ainda não há dados. Assim que o funil começar a mandar eventos pra cá, o funil aparece aqui. 🙂</div></section>' : ''}
@@ -288,7 +357,8 @@
           <p class="desc">Quantos leads entraram e de que tipo (pelo faturamento do formulário). Digite o investimento em anúncios pra ver o CPL geral e por tipo.</p>
           ${leadsAviso}
           <div class="invest-linha">
-            <label>Investimento em anúncios (R$): <input id="invest" type="number" min="0" step="10" placeholder="puxado do Meta / ou digite" /></label>
+            <span>Investimento em anúncios:</span>
+            <span id="invest-display" class="invest-pill">R$ 0,00</span>
             <span id="invest-fonte" class="invest-fonte"></span>
             <span id="cpl-geral"></span>
           </div>
@@ -334,28 +404,19 @@
           </section>
         </div>`;
 
-      // Campo de investimento -> CPL ao vivo (sem refazer a pagina inteira)
-      const inp = document.getElementById('invest');
-      if (inp) {
-        inp.value = investimento || '';
-        inp.oninput = () => {
-          investimento = Number(inp.value) || 0;
-          localStorage.setItem('reconecta_invest', investimento);
-          renderLeads();
-        };
-      }
       renderLeads();
+      sincronizarPeriodoInputs();
     }
 
     async function puxarInvestimentoMeta() {
       try {
-        const r = await fetch('/api/investimento?token=' + encodeURIComponent(token));
+        const r = await fetch('/api/investimento?token=' + encodeURIComponent(token) + periodoQuery());
         if (!r.ok) return;
         const j = await r.json();
         if (j && j.fonte === 'meta' && j.investimento != null) {
           investimento = j.investimento;
           investAuto = true;
-          investPeriodo = j.periodo || '';
+          investPeriodo = '';
           localStorage.setItem('reconecta_invest', investimento);
         }
       } catch (e) { /* sem Meta: segue no valor manual */ }
@@ -365,7 +426,7 @@
       if (!token) return telaLogin();
       try {
         const [r] = await Promise.all([
-          fetch('/api/stats?token=' + encodeURIComponent(token)),
+          fetch('/api/stats?token=' + encodeURIComponent(token) + periodoQuery()),
           puxarInvestimentoMeta(),
         ]);
         if (r.status === 401) return telaLogin('Token inválido. Tente de novo.');

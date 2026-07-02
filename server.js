@@ -17,6 +17,7 @@ const path = require('path');
 const { registrar, metricas } = require('./src/analytics');
 const { pool } = require('./src/db');
 const { carregarInvestimento } = require('./src/investimentoAds');
+const { normalizarPeriodo } = require('./src/periodo');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -111,7 +112,8 @@ app.get('/api/stats', async (req, res) => {
     return res.status(401).json({ erro: 'token invalido' });
   }
   try {
-    const dados = await metricas();
+    const periodo = normalizarPeriodo(req.query);
+    const dados = await metricas(periodo);
     res.json(dados);
   } catch (e) {
     console.error('[api/stats] erro:', e.message);
@@ -131,11 +133,13 @@ app.get('/api/investimento', async (req, res) => {
     return res.status(401).json({ erro: 'token invalido' });
   }
 
+  const periodo = normalizarPeriodo(req.query);
+
   // 1) Postgres: api_conversoes.anuncios
   if (pool) {
     try {
-      const investimento = await carregarInvestimento();
-      return res.json({ investimento, fonte: 'meta' });
+      const investimento = await carregarInvestimento(periodo);
+      return res.json({ investimento, fonte: 'meta', periodo });
     } catch (e) {
       console.error('[api/investimento] falha ao ler do Postgres, tentando Meta API:', e.message);
       // segue pro fallback
