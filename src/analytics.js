@@ -265,6 +265,12 @@ async function metricas() {
   }
   const pagosTotal = pagamento.pagos_total;
 
+  // Regra de negocio: o PDF so e gerado quando ha pagamento confirmado.
+  // Entao totais.pdfs = pagamento.pagos_total (mesma coisa vale na etapa 'pdf'
+  // do array funil, montada abaixo). Se nao houver pagamento, fica 0.
+  const pdfsGerados = pagamento && pagamento.pagos_total ? pagamento.pagos_total : 0;
+  totais.pdfs = pdfsGerados;
+
   // --- Captacao por link/origem (primeiro toque) -----------------------------
   // Origem vem do evento 'visita' (dados.origem / utm_source / utm_campaign / link).
   // Enquanto o time nao enviar, tudo cai em "Sem origem (direto)".
@@ -351,7 +357,7 @@ async function metricas() {
       funilCru.push({ key: 'lead',      label: 'Preencheu os dados',   sessoes: fq.viraram_lead });
       funilCru.push({ key: 'resultado', label: 'Viu o diagnóstico',    sessoes: fq.totais.resultados });
       funilCru.push({ key: 'compra',    label: 'Clicou em comprar',    sessoes: fq.totais.compras });
-      funilCru.push({ key: 'pdf',       label: 'PDF gerado',           sessoes: 0 });
+      funilCru.push({ key: 'pdf',       label: 'PDF gerado',           sessoes: pdfsGerados });
 
       const baseTopo = funilCru[0].sessoes || 1;
       funilFinal = funilCru.map((f, i) => {
