@@ -9,6 +9,7 @@
 // ============================================================================
 const fs = require('fs');
 const path = require('path');
+const { carregarPagamento } = require('./pagamentoGuru');
 
 const DIR = path.join(__dirname, '..', 'data');
 const ARQ = path.join(DIR, 'eventos.jsonl');
@@ -107,7 +108,7 @@ function lerEventos() {
 }
 
 // --- Agrega tudo num objeto pro dashboard ------------------------------------
-function metricas() {
+async function metricas() {
   const eventos = lerEventos();
   const etapas = etapasFunil();
   const indexDe = {};
@@ -224,20 +225,33 @@ function metricas() {
       fatReemb += Number(d.valor) || 0;
     }
   }
-  const pagosTotal = pix + cartao + boleto + outroPago;
-  const pagamento = {
-    conectado: pagosTotal > 0 || reembolsos > 0,
+  const pagosTotalLocal = pix + cartao + boleto + outroPago;
+  const pagamentoLocal = {
+    conectado: pagosTotalLocal > 0 || reembolsos > 0,
     pix,
     cartao,
     boleto,
     outro: outroPago,
-    pagos_total: pagosTotal,
+    pagos_total: pagosTotalLocal,
     reembolsos,
-    taxa_reembolso: pct(reembolsos, pagosTotal),
+    taxa_reembolso: pct(reembolsos, pagosTotalLocal),
     faturamento_bruto: Math.round(fatBruto * 100) / 100,
     faturamento_liquido: Math.round((fatBruto - fatReemb) * 100) / 100,
-    ticket: pagosTotal ? Math.round((fatBruto / pagosTotal) * 100) / 100 : 0,
+    ticket: pagosTotalLocal ? Math.round((fatBruto / pagosTotalLocal) * 100) / 100 : 0,
   };
+
+  // Se tiver Postgres configurado, o objeto 'pagamento' vem da tabela
+  // financeiro.guru_log_quiz (fonte de verdade). Se falhar, cai no local.
+  let pagamento = pagamentoLocal;
+  if (process.env.DATABASE_URL) {
+    try {
+      pagamento = await carregarPagamento();
+    } catch (e) {
+      console.error('[analytics] falha ao ler pagamento do Postgres, usando fallback local:', e.message);
+      pagamento = pagamentoLocal;
+    }
+  }
+  const pagosTotal = pagamento.pagos_total;
 
   // --- Captacao por link/origem (primeiro toque) -----------------------------
   // Origem vem do evento 'visita' (dados.origem / utm_source / utm_campaign / link).
