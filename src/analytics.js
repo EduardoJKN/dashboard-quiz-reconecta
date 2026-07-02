@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { carregarPagamento } = require('./pagamentoGuru');
 const { carregarLeads } = require('./leadsQuiz');
+const { carregarFunilQuiz } = require('./funilQuiz');
 
 const DIR = path.join(__dirname, '..', 'data');
 const ARQ = path.join(DIR, 'eventos.jsonl');
@@ -312,6 +313,69 @@ async function metricas() {
       .sort((a, b) => ORDEM_TIPO.indexOf(a.tipo) - ORDEM_TIPO.indexOf(b.tipo)),
   };
 
+  // --- Bloco funil/sessoes/captacao/abandono vindo de funil_quiz.quiz_sessoes -
+  // Substitui total_sessoes, totais.visitas/iniciaram/resultados/compras,
+  // captacao e abandono quando o Postgres esta configurado. Nao mexe em
+  // totais.leads (esse vem de lp_form.leads via carregarLeads) nem em pagamento.
+  let totalSessoesFinal = totalSessoes;
+  let captacaoFinal = captacao;
+  let abandonoFinal = null; // se null, cai no fallback local no return
+  if (process.env.DATABASE_URL) {
+    try {
+      const fq = await carregarFunilQuiz();
+      totalSessoesFinal = fq.total_sessoes;
+      totais.visitas = fq.totais.visitas;
+      totais.iniciaram = fq.totais.iniciaram;
+      totais.resultados = fq.totais.resultados;
+      totais.compras = fq.totais.compras;
+
+      // captacao a partir das origens (utm_source)
+      const semOrigemChave = 'Sem origem';
+      const totSessoesCap = fq.total_sessoes || 0;
+      captacaoFinal = {
+        tem_origem: fq.origens.some((o) => o.origem && o.origem !== semOrigemChave),
+        fontes: fq.origens
+          .map((o) => ({
+            origem: o.origem === semOrigemChave ? 'Sem origem (direto)' : o.origem,
+            visitas: o.sessoes,
+            leads: o.leads,
+            compras: o.compras,
+            pct: pct(o.sessoes, totSessoesCap),
+            conv_lead: pct(o.leads, o.sessoes),
+            conv_compra: pct(o.compras, o.sessoes),
+          }))
+          .sort((a, b) => b.visitas - a.visitas),
+      };
+
+      // abandono: por pergunta + no formulario. Labels a partir de LABEL_PERGUNTA.
+      const rotuloPergunta = (n) => {
+        if (n == null || n === 0) return 'Abriu o quiz';
+        if (n >= 1 && n <= 15) return LABEL_PERGUNTA[n] || `P${n}`;
+        return `P${n}`;
+      };
+      abandonoFinal = [];
+      for (const r of fq.perguntas_abandono) {
+        if (!r.sessoes) continue;
+        const n = r.parou_na_pergunta;
+        abandonoFinal.push({
+          key: n == null || n === 0 ? 'visita' : 'p' + n,
+          label: rotuloPergunta(n),
+          count: r.sessoes,
+        });
+      }
+      if (fq.abandono_formulario > 0) {
+        abandonoFinal.push({
+          key: 'captura',
+          label: 'Chegou no formulário',
+          count: fq.abandono_formulario,
+        });
+      }
+      abandonoFinal.sort((a, b) => b.count - a.count);
+    } catch (e) {
+      console.error('[analytics] falha ao ler funil do Postgres, usando fallback local:', e.message);
+    }
+  }
+
   const conversao = {
     visita_resultado: pct(totais.resultados, totais.visitas),
     resultado_compra: pct(totais.compras, totais.resultados),
@@ -322,14 +386,14 @@ async function metricas() {
 
   return {
     gerado_em: Date.now(),
-    total_sessoes: totalSessoes,
+    total_sessoes: totalSessoesFinal,
     totais,
     conversao,
     pagamento,
-    captacao,
+    captacao: captacaoFinal,
     leads_tipos,
     funil,
-    abandono: abandono.filter((a) => a.count > 0).sort((a, b) => b.count - a.count),
+    abandono: abandonoFinal || abandono.filter((a) => a.count > 0).sort((a, b) => b.count - a.count),
     perfis,
   };
 }
