@@ -11,9 +11,12 @@
 //   - aponta o webhook do Guru pra <dominio>/api/webhook/pagamento
 // Enquanto ninguem conecta, o dashboard aparece zerado (sem risco pro funil).
 // ============================================================================
+require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const { registrar, metricas } = require('./src/analytics');
+const { pool } = require('./src/db');
+const { carregarInvestimento } = require('./src/investimentoAds');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -35,6 +38,17 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Health check (Render usa pra saber se subiu)
 app.get('/api/health', (req, res) => res.json({ ok: true, servico: 'reconecta-dashboard' }));
+
+// Health check do Postgres (SELECT NOW()). Devolve { ok, now } ou { ok:false, erro }.
+app.get('/api/health/db', async (req, res) => {
+  if (!pool) return res.status(503).json({ ok: false, erro: 'DATABASE_URL nao configurada' });
+  try {
+    const { rows } = await pool.query('SELECT NOW() AS now');
+    res.json({ ok: true, now: rows[0].now });
+  } catch (e) {
+    res.status(500).json({ ok: false, erro: e.message });
+  }
+});
 
 // --- 1) Ingestao de eventos do funil ----------------------------------------
 // O funil manda: { tipo, sessao, dados }. tipo = visita | iniciou | passo |
@@ -92,21 +106,43 @@ app.post('/api/webhook/pagamento', (req, res) => {
 // --- 3) Dashboard ------------------------------------------------------------
 app.get('/', (req, res) => res.redirect('/dashboard'));
 app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
-app.get('/api/stats', (req, res) => {
+app.get('/api/stats', async (req, res) => {
   if ((req.query.token || '') !== DASHBOARD_TOKEN) {
     return res.status(401).json({ erro: 'token invalido' });
   }
-  res.json(metricas());
+  try {
+    const dados = await metricas();
+    res.json(dados);
+  } catch (e) {
+    console.error('[api/stats] erro:', e.message);
+    res.status(500).json({ erro: 'falha ao gerar metricas' });
+  }
 });
 
-// --- Investimento em anúncios: puxa o gasto do Meta Ads (se configurado) -----
-// O time configura no Render: META_ACCESS_TOKEN e META_AD_ACCOUNT_ID (só os
-// números, com ou sem 'act_'). Opcional: META_DATE_PRESET (default 'this_month').
-// Sem essas variáveis, devolve 'nao_configurado' e o dashboard cai no campo manual.
+// --- Investimento em anúncios ------------------------------------------------
+// Fonte primaria: api_conversoes.anuncios (Postgres), somando spend da campanha
+// do quiz. Se nao houver DATABASE_URL ou a query falhar, cai no fluxo antigo
+// via Meta Marketing API (META_ACCESS_TOKEN + META_AD_ACCOUNT_ID no Render).
+// O frontend olha j.fonte === 'meta' pra exibir "puxado do Meta" — mantemos
+// 'meta' pra o dado do banco tambem, pois a origem primaria continua sendo
+// o Meta Ads (aqui so trocamos o caminho de leitura).
 app.get('/api/investimento', async (req, res) => {
   if ((req.query.token || '') !== DASHBOARD_TOKEN) {
     return res.status(401).json({ erro: 'token invalido' });
   }
+
+  // 1) Postgres: api_conversoes.anuncios
+  if (pool) {
+    try {
+      const investimento = await carregarInvestimento();
+      return res.json({ investimento, fonte: 'meta' });
+    } catch (e) {
+      console.error('[api/investimento] falha ao ler do Postgres, tentando Meta API:', e.message);
+      // segue pro fallback
+    }
+  }
+
+  // 2) Fallback: Meta Marketing API
   const tokenMeta = process.env.META_ACCESS_TOKEN;
   const conta = process.env.META_AD_ACCOUNT_ID;
   if (!tokenMeta || !conta) return res.json({ investimento: null, fonte: 'nao_configurado' });

@@ -9,6 +9,9 @@
 // ============================================================================
 const fs = require('fs');
 const path = require('path');
+const { carregarPagamento } = require('./pagamentoGuru');
+const { carregarLeads } = require('./leadsQuiz');
+const { carregarFunilQuiz } = require('./funilQuiz');
 
 const DIR = path.join(__dirname, '..', 'data');
 const ARQ = path.join(DIR, 'eventos.jsonl');
@@ -107,7 +110,7 @@ function lerEventos() {
 }
 
 // --- Agrega tudo num objeto pro dashboard ------------------------------------
-function metricas() {
+async function metricas() {
   const eventos = lerEventos();
   const etapas = etapasFunil();
   const indexDe = {};
@@ -199,6 +202,16 @@ function metricas() {
     pdfs: get('pdf'),
   };
 
+  // Se tiver Postgres, o card "Leads (formulario)" vem de lp_form.leads
+  // (funil_origem = 'QUIZ'). Se falhar, mantem o valor do funil local.
+  if (process.env.DATABASE_URL) {
+    try {
+      totais.leads = await carregarLeads();
+    } catch (e) {
+      console.error('[analytics] falha ao ler leads do Postgres, usando fallback local:', e.message);
+    }
+  }
+
   // --- Pagamento (eventos 'pago'/'reembolso' vindos do webhook do Guru) -------
   // Dedup por id de transacao: o Guru pode reenviar o mesmo evento varias vezes.
   const vistoPago = new Set();
@@ -224,20 +237,39 @@ function metricas() {
       fatReemb += Number(d.valor) || 0;
     }
   }
-  const pagosTotal = pix + cartao + boleto + outroPago;
-  const pagamento = {
-    conectado: pagosTotal > 0 || reembolsos > 0,
+  const pagosTotalLocal = pix + cartao + boleto + outroPago;
+  const pagamentoLocal = {
+    conectado: pagosTotalLocal > 0 || reembolsos > 0,
     pix,
     cartao,
     boleto,
     outro: outroPago,
-    pagos_total: pagosTotal,
+    pagos_total: pagosTotalLocal,
     reembolsos,
-    taxa_reembolso: pct(reembolsos, pagosTotal),
+    taxa_reembolso: pct(reembolsos, pagosTotalLocal),
     faturamento_bruto: Math.round(fatBruto * 100) / 100,
     faturamento_liquido: Math.round((fatBruto - fatReemb) * 100) / 100,
-    ticket: pagosTotal ? Math.round((fatBruto / pagosTotal) * 100) / 100 : 0,
+    ticket: pagosTotalLocal ? Math.round((fatBruto / pagosTotalLocal) * 100) / 100 : 0,
   };
+
+  // Se tiver Postgres configurado, o objeto 'pagamento' vem da tabela
+  // financeiro.guru_log_quiz (fonte de verdade). Se falhar, cai no local.
+  let pagamento = pagamentoLocal;
+  if (process.env.DATABASE_URL) {
+    try {
+      pagamento = await carregarPagamento();
+    } catch (e) {
+      console.error('[analytics] falha ao ler pagamento do Postgres, usando fallback local:', e.message);
+      pagamento = pagamentoLocal;
+    }
+  }
+  const pagosTotal = pagamento.pagos_total;
+
+  // Regra de negocio: o PDF so e gerado quando ha pagamento confirmado.
+  // Entao totais.pdfs = pagamento.pagos_total (mesma coisa vale na etapa 'pdf'
+  // do array funil, montada abaixo). Se nao houver pagamento, fica 0.
+  const pdfsGerados = pagamento && pagamento.pagos_total ? pagamento.pagos_total : 0;
+  totais.pdfs = pdfsGerados;
 
   // --- Captacao por link/origem (primeiro toque) -----------------------------
   // Origem vem do evento 'visita' (dados.origem / utm_source / utm_campaign / link).
@@ -287,6 +319,122 @@ function metricas() {
       .sort((a, b) => ORDEM_TIPO.indexOf(a.tipo) - ORDEM_TIPO.indexOf(b.tipo)),
   };
 
+  // --- Bloco funil/sessoes/captacao/abandono vindo de funil_quiz.quiz_sessoes -
+  // Substitui total_sessoes, totais.visitas/iniciaram/resultados/compras,
+  // captacao e abandono quando o Postgres esta configurado. Nao mexe em
+  // totais.leads (esse vem de lp_form.leads via carregarLeads) nem em pagamento.
+  let totalSessoesFinal = totalSessoes;
+  let captacaoFinal = captacao;
+  let abandonoFinal = null; // se null, cai no fallback local no return
+  let funilFinal = null;    // idem
+  let perfisFinal = null;   // idem
+  if (process.env.DATABASE_URL) {
+    try {
+      const fq = await carregarFunilQuiz();
+      totalSessoesFinal = fq.total_sessoes;
+      totais.visitas = fq.totais.visitas;
+      totais.iniciaram = fq.totais.iniciaram;
+      totais.resultados = fq.totais.resultados;
+      totais.compras = fq.totais.compras;
+
+      // funil: monta o array na mesma forma do local
+      // ({ key, label, sessoes, pct_topo, pct_etapa, abandonaram }). O "lead"
+      // aqui usa virou_lead da tabela de sessoes (visualizacao de funil), NAO
+      // substitui o card oficial de leads (esse vem de lp_form.leads).
+      const alcancePergunta = {};
+      for (const r of fq.perguntas_alcance) alcancePergunta[r.pergunta] = r.sessoes;
+      const funilCru = [
+        { key: 'visita',    label: 'Abriu o quiz',         sessoes: fq.totais.visitas },
+        { key: 'iniciou',   label: 'Começou a responder',  sessoes: fq.totais.iniciaram },
+      ];
+      for (let n = 1; n <= 15; n++) {
+        funilCru.push({
+          key: 'p' + n,
+          label: LABEL_PERGUNTA[n],
+          sessoes: alcancePergunta[n] || 0,
+        });
+      }
+      funilCru.push({ key: 'captura',   label: 'Chegou no formulário', sessoes: fq.chegaram_form });
+      funilCru.push({ key: 'lead',      label: 'Preencheu os dados',   sessoes: fq.viraram_lead });
+      funilCru.push({ key: 'resultado', label: 'Viu o diagnóstico',    sessoes: fq.totais.resultados });
+      funilCru.push({ key: 'compra',    label: 'Clicou em comprar',    sessoes: fq.totais.compras });
+      funilCru.push({ key: 'pdf',       label: 'PDF gerado',           sessoes: pdfsGerados });
+
+      const baseTopo = funilCru[0].sessoes || 1;
+      funilFinal = funilCru.map((f, i) => {
+        const pct_topo = Math.round((f.sessoes / baseTopo) * 1000) / 10;
+        if (i === 0) return { ...f, pct_topo: 100, pct_etapa: 100, abandonaram: 0 };
+        const ant = funilCru[i - 1].sessoes || 1;
+        return {
+          ...f,
+          pct_topo,
+          pct_etapa: Math.round((f.sessoes / ant) * 1000) / 10,
+          abandonaram: Math.max(0, funilCru[i - 1].sessoes - f.sessoes),
+        };
+      });
+
+      // captacao a partir das origens (utm_source)
+      const semOrigemChave = 'Sem origem';
+      const totSessoesCap = fq.total_sessoes || 0;
+      captacaoFinal = {
+        tem_origem: fq.origens.some((o) => o.origem && o.origem !== semOrigemChave),
+        fontes: fq.origens
+          .map((o) => ({
+            origem: o.origem === semOrigemChave ? 'Sem origem (direto)' : o.origem,
+            visitas: o.sessoes,
+            leads: o.leads,
+            compras: o.compras,
+            pct: pct(o.sessoes, totSessoesCap),
+            conv_lead: pct(o.leads, o.sessoes),
+            conv_compra: pct(o.compras, o.sessoes),
+          }))
+          .sort((a, b) => b.visitas - a.visitas),
+      };
+
+      // abandono: por pergunta + no formulario. Labels a partir de LABEL_PERGUNTA.
+      const rotuloPergunta = (n) => {
+        if (n == null || n === 0) return 'Abriu o quiz';
+        if (n >= 1 && n <= 15) return LABEL_PERGUNTA[n] || `P${n}`;
+        return `P${n}`;
+      };
+      abandonoFinal = [];
+      for (const r of fq.perguntas_abandono) {
+        if (!r.sessoes) continue;
+        const n = r.parou_na_pergunta;
+        abandonoFinal.push({
+          key: n == null || n === 0 ? 'visita' : 'p' + n,
+          label: rotuloPergunta(n),
+          count: r.sessoes,
+        });
+      }
+      if (fq.abandono_formulario > 0) {
+        abandonoFinal.push({
+          key: 'captura',
+          label: 'Chegou no formulário',
+          count: fq.abandono_formulario,
+        });
+      }
+      abandonoFinal.sort((a, b) => b.count - a.count);
+
+      // perfis: distribuicao vinda da coluna 'perfil' em funil_quiz.quiz_sessoes
+      // entre quem chegou ao diagnostico. Se a query nao trouxer nada, mantem
+      // o fallback local (jsonl).
+      if (fq.perfis && fq.perfis.length) {
+        const totalComPerfil = fq.perfis.reduce((s, p) => s + p.count, 0) || 1;
+        perfisFinal = fq.perfis
+          .map((p) => ({
+            nome: p.nome,
+            emoji: PERFIL_EMOJI[p.nome] || '•',
+            count: p.count,
+            pct: Math.round((p.count / totalComPerfil) * 1000) / 10,
+          }))
+          .sort((a, b) => b.count - a.count);
+      }
+    } catch (e) {
+      console.error('[analytics] falha ao ler funil do Postgres, usando fallback local:', e.message);
+    }
+  }
+
   const conversao = {
     visita_resultado: pct(totais.resultados, totais.visitas),
     resultado_compra: pct(totais.compras, totais.resultados),
@@ -297,15 +445,15 @@ function metricas() {
 
   return {
     gerado_em: Date.now(),
-    total_sessoes: totalSessoes,
+    total_sessoes: totalSessoesFinal,
     totais,
     conversao,
     pagamento,
-    captacao,
+    captacao: captacaoFinal,
     leads_tipos,
-    funil,
-    abandono: abandono.filter((a) => a.count > 0).sort((a, b) => b.count - a.count),
-    perfis,
+    funil: funilFinal || funil,
+    abandono: abandonoFinal || abandono.filter((a) => a.count > 0).sort((a, b) => b.count - a.count),
+    perfis: perfisFinal || perfis,
   };
 }
 
