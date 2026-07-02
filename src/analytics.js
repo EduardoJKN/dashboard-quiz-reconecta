@@ -327,6 +327,7 @@ async function metricas() {
   let captacaoFinal = captacao;
   let abandonoFinal = null; // se null, cai no fallback local no return
   let funilFinal = null;    // idem
+  let perfisFinal = null;   // idem
   if (process.env.DATABASE_URL) {
     try {
       const fq = await carregarFunilQuiz();
@@ -414,6 +415,21 @@ async function metricas() {
         });
       }
       abandonoFinal.sort((a, b) => b.count - a.count);
+
+      // perfis: distribuicao vinda da coluna 'perfil' em funil_quiz.quiz_sessoes
+      // entre quem chegou ao diagnostico. Se a query nao trouxer nada, mantem
+      // o fallback local (jsonl).
+      if (fq.perfis && fq.perfis.length) {
+        const totalComPerfil = fq.perfis.reduce((s, p) => s + p.count, 0) || 1;
+        perfisFinal = fq.perfis
+          .map((p) => ({
+            nome: p.nome,
+            emoji: PERFIL_EMOJI[p.nome] || '•',
+            count: p.count,
+            pct: Math.round((p.count / totalComPerfil) * 1000) / 10,
+          }))
+          .sort((a, b) => b.count - a.count);
+      }
     } catch (e) {
       console.error('[analytics] falha ao ler funil do Postgres, usando fallback local:', e.message);
     }
@@ -437,7 +453,7 @@ async function metricas() {
     leads_tipos,
     funil: funilFinal || funil,
     abandono: abandonoFinal || abandono.filter((a) => a.count > 0).sort((a, b) => b.count - a.count),
-    perfis,
+    perfis: perfisFinal || perfis,
   };
 }
 

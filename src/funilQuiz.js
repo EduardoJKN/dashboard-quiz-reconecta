@@ -59,13 +59,27 @@ const SQL_PERGUNTAS_ALCANCE = `
   ORDER BY gs.n
 `;
 
+// Distribuicao por perfil entre quem chegou ao diagnostico (max_pergunta >= 15)
+// e tem perfil preenchido. So agregado — nunca linha individual.
+const SQL_PERFIS = `
+  SELECT
+    TRIM(perfil) AS nome,
+    COUNT(*)::int AS count
+  FROM funil_quiz.quiz_sessoes
+  WHERE max_pergunta >= 15
+    AND NULLIF(TRIM(perfil), '') IS NOT NULL
+  GROUP BY TRIM(perfil)
+  ORDER BY count DESC
+`;
+
 async function carregarFunilQuiz() {
-  const [resumo, aband, abandForm, origem, perguntas] = await Promise.all([
+  const [resumo, aband, abandForm, origem, perguntas, perfis] = await Promise.all([
     query(SQL_RESUMO),
     query(SQL_ABANDONO_PERGUNTA),
     query(SQL_ABANDONO_FORM),
     query(SQL_ORIGEM),
     query(SQL_PERGUNTAS_ALCANCE),
+    query(SQL_PERFIS),
   ]);
   const r = resumo.rows[0] || {};
   const abandonoForm = (abandForm.rows[0] && abandForm.rows[0].abandono_formulario) || 0;
@@ -85,6 +99,7 @@ async function carregarFunilQuiz() {
     perguntas_alcance: perguntas.rows, // [{ pergunta, sessoes }]
     abandono_formulario: abandonoForm,
     origens: origem.rows,           // [{ origem, sessoes, leads, compras }]
+    perfis: perfis.rows,            // [{ nome, count }] — so agregado
   };
 }
 
