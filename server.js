@@ -16,6 +16,7 @@ const express = require('express');
 const path = require('path');
 const { registrar, metricas } = require('./src/analytics');
 const { pool } = require('./src/db');
+const { carregarInvestimento } = require('./src/investimentoAds');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -118,14 +119,30 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
-// --- Investimento em anúncios: puxa o gasto do Meta Ads (se configurado) -----
-// O time configura no Render: META_ACCESS_TOKEN e META_AD_ACCOUNT_ID (só os
-// números, com ou sem 'act_'). Opcional: META_DATE_PRESET (default 'this_month').
-// Sem essas variáveis, devolve 'nao_configurado' e o dashboard cai no campo manual.
+// --- Investimento em anúncios ------------------------------------------------
+// Fonte primaria: api_conversoes.anuncios (Postgres), somando spend da campanha
+// do quiz. Se nao houver DATABASE_URL ou a query falhar, cai no fluxo antigo
+// via Meta Marketing API (META_ACCESS_TOKEN + META_AD_ACCOUNT_ID no Render).
+// O frontend olha j.fonte === 'meta' pra exibir "puxado do Meta" — mantemos
+// 'meta' pra o dado do banco tambem, pois a origem primaria continua sendo
+// o Meta Ads (aqui so trocamos o caminho de leitura).
 app.get('/api/investimento', async (req, res) => {
   if ((req.query.token || '') !== DASHBOARD_TOKEN) {
     return res.status(401).json({ erro: 'token invalido' });
   }
+
+  // 1) Postgres: api_conversoes.anuncios
+  if (pool) {
+    try {
+      const investimento = await carregarInvestimento();
+      return res.json({ investimento, fonte: 'meta' });
+    } catch (e) {
+      console.error('[api/investimento] falha ao ler do Postgres, tentando Meta API:', e.message);
+      // segue pro fallback
+    }
+  }
+
+  // 2) Fallback: Meta Marketing API
   const tokenMeta = process.env.META_ACCESS_TOKEN;
   const conta = process.env.META_AD_ACCOUNT_ID;
   if (!tokenMeta || !conta) return res.json({ investimento: null, fonte: 'nao_configurado' });
