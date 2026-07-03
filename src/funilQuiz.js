@@ -92,18 +92,75 @@ const SQL_PERFIS = `
   ORDER BY count DESC
 `;
 
+// A/B/C: queries independentes da BASE_CTE porque exigem email preenchido
+// (regra de negocio das metricas A/B/C — se aplicasse na BASE_CTE, cortaria
+// tambem "Abriram o quiz", "Comecaram", etc.).
+const SQL_AB_RESUMO = `
+  SELECT
+    LOWER(TRIM(ab_entrada)) AS entrada,
+    COUNT(*)::int AS sessoes
+  FROM funil_quiz.quiz_sessoes
+  WHERE NULLIF(TRIM(ab_entrada), '') IS NOT NULL
+    AND LOWER(TRIM(ab_entrada)) IN ('a', 'b', 'c')
+    AND NULLIF(TRIM(email), '') IS NOT NULL
+    AND COALESCE(email, '') NOT ILIKE '%teste%'
+    AND COALESCE(email, '') NOT ILIKE '%reconecta%'
+    AND COALESCE(primeiro_evento, ultimo_evento) >= $1::date
+    AND COALESCE(primeiro_evento, ultimo_evento) <  ($2::date + interval '1 day')
+  GROUP BY 1
+  ORDER BY 1
+`;
+
+const SQL_AB_PERGUNTAS = `
+  SELECT
+    gs.n AS pergunta,
+    LOWER(TRIM(q.ab_entrada)) AS entrada,
+    COUNT(*) FILTER (WHERE q.max_pergunta >= gs.n)::int AS sessoes
+  FROM generate_series(1, 15) AS gs(n)
+  CROSS JOIN funil_quiz.quiz_sessoes q
+  WHERE NULLIF(TRIM(q.ab_entrada), '') IS NOT NULL
+    AND LOWER(TRIM(q.ab_entrada)) IN ('a', 'b', 'c')
+    AND NULLIF(TRIM(q.email), '') IS NOT NULL
+    AND COALESCE(q.email, '') NOT ILIKE '%teste%'
+    AND COALESCE(q.email, '') NOT ILIKE '%reconecta%'
+    AND COALESCE(q.primeiro_evento, q.ultimo_evento) >= $1::date
+    AND COALESCE(q.primeiro_evento, q.ultimo_evento) <  ($2::date + interval '1 day')
+  GROUP BY gs.n, LOWER(TRIM(q.ab_entrada))
+  ORDER BY gs.n, entrada
+`;
+
 async function carregarFunilQuiz({ inicio, fim } = {}) {
   const params = [inicio, fim];
-  const [resumo, aband, abandForm, origem, perguntas, perfis] = await Promise.all([
+  const [resumo, aband, abandForm, origem, perguntas, perfis, abResumo, abPerguntas] = await Promise.all([
     query(SQL_RESUMO, params),
     query(SQL_ABANDONO_PERGUNTA, params),
     query(SQL_ABANDONO_FORM, params),
     query(SQL_ORIGEM, params),
     query(SQL_PERGUNTAS_ALCANCE, params),
     query(SQL_PERFIS, params),
+    query(SQL_AB_RESUMO, params),
+    query(SQL_AB_PERGUNTAS, params),
   ]);
   const r = resumo.rows[0] || {};
   const abandonoForm = (abandForm.rows[0] && abandForm.rows[0].abandono_formulario) || 0;
+
+  const ab_entradas = { a: 0, b: 0, c: 0 };
+  for (const row of abResumo.rows) {
+    if (row.entrada === 'a' || row.entrada === 'b' || row.entrada === 'c') {
+      ab_entradas[row.entrada] = row.sessoes || 0;
+    }
+  }
+
+  const perguntas_ab = [];
+  for (let n = 1; n <= 15; n++) perguntas_ab.push({ pergunta: n, a: 0, b: 0, c: 0 });
+  for (const row of abPerguntas.rows) {
+    const idx = (row.pergunta || 0) - 1;
+    if (idx < 0 || idx >= 15) continue;
+    if (row.entrada === 'a' || row.entrada === 'b' || row.entrada === 'c') {
+      perguntas_ab[idx][row.entrada] = row.sessoes || 0;
+    }
+  }
+
   return {
     total_sessoes: r.abriram || 0,
     totais: {
@@ -121,6 +178,8 @@ async function carregarFunilQuiz({ inicio, fim } = {}) {
     abandono_formulario: abandonoForm,
     origens: origem.rows,           // [{ origem, sessoes, leads, compras }]
     perfis: perfis.rows,            // [{ nome, count }] — so agregado
+    ab_entradas,                    // { a, b, c } — so quem tem email valido
+    perguntas_ab,                   // [{ pergunta, a, b, c }] para P1..P15
   };
 }
 

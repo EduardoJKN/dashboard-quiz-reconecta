@@ -64,6 +64,10 @@
     .fd-val b { color: var(--texto); font-size: 13px; }
     .fd-sep { text-align: center; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--ouro); margin: 12px 0 8px; }
 
+    /* Breakdown discreto A/B/C por pergunta (P1..P15) */
+    .ab-breakdown { font-size: 11px; color: #8a7668; margin-top: 2px; line-height: 1.3; }
+    .linha .ab-inline { display: block; font-size: 11px; color: #8a7668; margin-top: 2px; font-weight: normal; }
+
     .vazio { text-align: center; color: var(--cinza); padding: 30px; font-size: 14px; }
     .login { max-width: 360px; margin: 60px auto; text-align: center; }
     .login input { width: 100%; padding: 11px; border: 1px solid #d8c6a8; border-radius: 8px; font-family: inherit; margin: 12px 0; font-size: 14px; }
@@ -263,6 +267,17 @@
           ${card(c.geral + '%', 'Conversão geral<br>(abriu → PDF)', null, 'destaque')}
         </div>`;
 
+      // ---- Cards A/B/C (teste de entrada) — so quem tem email valido ----
+      const ab = m.ab_entradas || { a: 0, b: 0, c: 0 };
+      const abTotal = (ab.a || 0) + (ab.b || 0) + (ab.c || 0);
+      const pctAB = (n) => (abTotal ? Math.round((n / abTotal) * 1000) / 10 : 0);
+      const cardsAB = `
+        <div class="cards">
+          ${card(ab.a || 0, 'Entrada A', pctAB(ab.a || 0))}
+          ${card(ab.b || 0, 'Entrada B', pctAB(ab.b || 0))}
+          ${card(ab.c || 0, 'Entrada C', pctAB(ab.c || 0))}
+        </div>`;
+
       // ---- Desenho do funil (sessões) + pagamento ----
       const ordem = ['visita', 'iniciou', 'captura', 'lead', 'resultado', 'compra', 'pdf'];
       let desenho = ordem.map((k) => {
@@ -312,10 +327,18 @@
       // ---- Funil por pergunta (P1..P15) ----
       const perguntas = (m.funil || []).filter((f) => /^p\d+$/.test(f.key));
       const perguntasHtml = perguntas.length
-        ? perguntas.map((f) => barra(
-            f.label, f.pct_topo,
-            `<b>${f.sessoes}</b> · ${f.pct_topo}%${f.abandonaram > 0 ? ` <span class="drop">−${f.abandonaram}</span>` : ''}`
-          )).join('')
+        ? perguntas.map((f) => {
+            const abF = f.ab || { a: 0, b: 0, c: 0 };
+            const temAB = (abF.a || abF.b || abF.c);
+            const abHtml = temAB
+              ? `<span class="ab-inline">A: ${abF.a || 0} · B: ${abF.b || 0} · C: ${abF.c || 0}</span>`
+              : '';
+            const nomeHtml = `${f.label}${abHtml}`;
+            return barra(
+              nomeHtml, f.pct_topo,
+              `<b>${f.sessoes}</b> · ${f.pct_topo}%${f.abandonaram > 0 ? ` <span class="drop">−${f.abandonaram}</span>` : ''}`
+            );
+          }).join('')
         : '<div class="vazio">Ninguém respondeu perguntas ainda.</div>';
 
       // ---- Conversão ----
@@ -351,6 +374,7 @@
           <button class="btn" onclick="aplicarPeriodo()">Aplicar</button>
         </div>
         ${cards}
+        ${cardsAB}
         ${semDados ? '<section><div class="vazio">Ainda não há dados. Assim que o funil começar a mandar eventos pra cá, o funil aparece aqui. 🙂</div></section>' : ''}
         <section>
           <h2>💰 Investimento × leads (custo por lead)</h2>

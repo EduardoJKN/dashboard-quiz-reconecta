@@ -328,6 +328,7 @@ async function metricas({ inicio, fim } = {}) {
   let abandonoFinal = null; // se null, cai no fallback local no return
   let funilFinal = null;    // idem
   let perfisFinal = null;   // idem
+  let abEntradas = { a: 0, b: 0, c: 0 }; // teste A/B/C (so quem tem email valido)
   if (process.env.DATABASE_URL) {
     try {
       const fq = await carregarFunilQuiz({ inicio, fim });
@@ -343,6 +344,9 @@ async function metricas({ inicio, fim } = {}) {
       // substitui o card oficial de leads (esse vem de lp_form.leads).
       const alcancePergunta = {};
       for (const r of fq.perguntas_alcance) alcancePergunta[r.pergunta] = r.sessoes;
+      // Alcance A/B/C por pergunta (indexado por numero da pergunta)
+      const abPergunta = {};
+      for (const r of (fq.perguntas_ab || [])) abPergunta[r.pergunta] = { a: r.a || 0, b: r.b || 0, c: r.c || 0 };
       const funilCru = [
         { key: 'visita',    label: 'Abriu o quiz',         sessoes: fq.totais.visitas },
         { key: 'iniciou',   label: 'Começou a responder',  sessoes: fq.totais.iniciaram },
@@ -352,6 +356,7 @@ async function metricas({ inicio, fim } = {}) {
           key: 'p' + n,
           label: LABEL_PERGUNTA[n],
           sessoes: alcancePergunta[n] || 0,
+          ab: abPergunta[n] || { a: 0, b: 0, c: 0 },
         });
       }
       funilCru.push({ key: 'captura',   label: 'Chegou no formulário', sessoes: fq.chegaram_form });
@@ -416,6 +421,15 @@ async function metricas({ inicio, fim } = {}) {
       }
       abandonoFinal.sort((a, b) => b.count - a.count);
 
+      // A/B/C: agregados por entrada (so sessoes com email valido)
+      if (fq.ab_entradas) {
+        abEntradas = {
+          a: fq.ab_entradas.a || 0,
+          b: fq.ab_entradas.b || 0,
+          c: fq.ab_entradas.c || 0,
+        };
+      }
+
       // perfis: distribuicao vinda da coluna 'perfil' em funil_quiz.quiz_sessoes
       // entre quem chegou ao diagnostico. Se a query nao trouxer nada, mantem
       // o fallback local (jsonl).
@@ -455,6 +469,7 @@ async function metricas({ inicio, fim } = {}) {
     funil: funilFinal || funil,
     abandono: abandonoFinal || abandono.filter((a) => a.count > 0).sort((a, b) => b.count - a.count),
     perfis: perfisFinal || perfis,
+    ab_entradas: abEntradas,
   };
 }
 
