@@ -17,7 +17,7 @@ const path = require('path');
 const { registrar, metricas } = require('./src/analytics');
 const { pool } = require('./src/db');
 const { carregarInvestimento } = require('./src/investimentoAds');
-const { normalizarPeriodo } = require('./src/periodo');
+const { normalizarPeriodo, normalizarFiltros } = require('./src/periodo');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -112,8 +112,8 @@ app.get('/api/stats', async (req, res) => {
     return res.status(401).json({ erro: 'token invalido' });
   }
   try {
-    const periodo = normalizarPeriodo(req.query);
-    const dados = await metricas(periodo);
+    const filtros = normalizarFiltros(req.query);
+    const dados = await metricas(filtros);
     res.json(dados);
   } catch (e) {
     console.error('[api/stats] erro:', e.message);
@@ -133,13 +133,23 @@ app.get('/api/investimento', async (req, res) => {
     return res.status(401).json({ erro: 'token invalido' });
   }
 
-  const periodo = normalizarPeriodo(req.query);
+  const filtros = normalizarFiltros(req.query);
+  const periodo = { inicio: filtros.inicio, fim: filtros.fim };
+  // api_conversoes.anuncios NAO tem coluna ab_entrada — nao inventamos filtro.
+  // Retornamos filtro_entrada_aplicado:false + motivo pra o front nao
+  // interpretar investimento como filtrado por entrada.
+  const filtroEntradaMeta = filtros.entrada
+    ? {
+        filtro_entrada_aplicado: false,
+        motivo: 'api_conversoes.anuncios nao possui ab_entrada',
+      }
+    : { filtro_entrada_aplicado: true };
 
   // 1) Postgres: api_conversoes.anuncios
   if (pool) {
     try {
       const investimento = await carregarInvestimento(periodo);
-      return res.json({ investimento, fonte: 'meta', periodo });
+      return res.json({ investimento, fonte: 'meta', periodo, ...filtroEntradaMeta });
     } catch (e) {
       console.error('[api/investimento] falha ao ler do Postgres, tentando Meta API:', e.message);
       // segue pro fallback
@@ -149,7 +159,7 @@ app.get('/api/investimento', async (req, res) => {
   // 2) Fallback: Meta Marketing API
   const tokenMeta = process.env.META_ACCESS_TOKEN;
   const conta = process.env.META_AD_ACCOUNT_ID;
-  if (!tokenMeta || !conta) return res.json({ investimento: null, fonte: 'nao_configurado' });
+  if (!tokenMeta || !conta) return res.json({ investimento: null, fonte: 'nao_configurado', ...filtroEntradaMeta });
 
   const preset = req.query.preset || process.env.META_DATE_PRESET || 'this_month';
   const contaId = String(conta).startsWith('act_') ? conta : 'act_' + conta;
@@ -157,15 +167,16 @@ app.get('/api/investimento', async (req, res) => {
   try {
     const r = await fetch(url);
     const j = await r.json();
-    if (j.error) return res.json({ investimento: null, fonte: 'erro', erro: j.error.message });
+    if (j.error) return res.json({ investimento: null, fonte: 'erro', erro: j.error.message, ...filtroEntradaMeta });
     const spend = j.data && j.data[0] ? Number(j.data[0].spend) : 0;
     return res.json({
       investimento: isNaN(spend) ? 0 : Math.round(spend * 100) / 100,
       fonte: 'meta',
       periodo: preset,
+      ...filtroEntradaMeta,
     });
   } catch (e) {
-    return res.json({ investimento: null, fonte: 'erro', erro: e.message });
+    return res.json({ investimento: null, fonte: 'erro', erro: e.message, ...filtroEntradaMeta });
   }
 });
 

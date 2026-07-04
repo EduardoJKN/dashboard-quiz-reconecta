@@ -67,6 +67,20 @@
     /* Breakdown discreto A/B/C por pergunta (P1..P15) */
     .ab-breakdown { font-size: 11px; color: #8a7668; margin-top: 2px; line-height: 1.3; }
     .linha .ab-inline { display: block; font-size: 11px; color: #8a7668; margin-top: 2px; font-weight: normal; }
+    .linha .ab-inline b.sel { color: var(--vinho); }
+
+    /* Card A/B/C: taxas + destaque quando o filtro seleciona a entrada */
+    .card .ab-taxas { font-size: 11px; color: var(--cinza); margin-top: 6px; line-height: 1.4; }
+    .card .ab-taxas b { color: var(--texto); }
+    .card.ab-selecionada { outline: 2px solid var(--vinho); box-shadow: 0 2px 8px rgba(92,26,26,.18); }
+
+    /* Aviso discreto no bloco de investimento */
+    .invest-obs { font-size: 12px; color: var(--cinza); margin-top: 6px; font-style: italic; }
+
+    .periodo-linha select.periodo-input {
+      padding: 6px 9px; border: 1px solid #d8c6a8; border-radius: 8px;
+      font-family: inherit; font-size: 13px; background: #fff; width: 120px;
+    }
 
     .vazio { text-align: center; color: var(--cinza); padding: 30px; font-size: 14px; }
     .login { max-width: 360px; margin: 60px auto; text-align: center; }
@@ -116,8 +130,18 @@
       : (_isYmd(localStorage.getItem('reconecta_inicio')) ? localStorage.getItem('reconecta_inicio') : _defP.inicio);
     let periodoFim = _isYmd(params.get('fim')) ? params.get('fim')
       : (_isYmd(localStorage.getItem('reconecta_fim')) ? localStorage.getItem('reconecta_fim') : _defP.fim);
+
+    // --- Filtro Entrada A/B/C (afeta todo o dashboard onde faz sentido) ---
+    function _normEntrada(v) {
+      const s = String(v == null ? '' : v).toLowerCase().trim();
+      return (s === 'a' || s === 'b' || s === 'c') ? s : 'todas';
+    }
+    let entradaAtual = _normEntrada(
+      params.get('entrada') || localStorage.getItem('reconecta_entrada') || 'todas'
+    );
     function periodoQuery() {
-      return `&inicio=${encodeURIComponent(periodoInicio)}&fim=${encodeURIComponent(periodoFim)}`;
+      const base = `&inicio=${encodeURIComponent(periodoInicio)}&fim=${encodeURIComponent(periodoFim)}`;
+      return entradaAtual === 'todas' ? base : base + `&entrada=${encodeURIComponent(entradaAtual)}`;
     }
     // flatpickr: cria (ou reaproveita) instancias em pt-BR. Formato visual
     // dd/mm/aaaa via altInput; valor real permanece YYYY-MM-DD.
@@ -151,9 +175,14 @@
       periodoInicio = i; periodoFim = f;
       localStorage.setItem('reconecta_inicio', i);
       localStorage.setItem('reconecta_fim', f);
+      const selEntrada = document.getElementById('entrada-select');
+      if (selEntrada) entradaAtual = _normEntrada(selEntrada.value);
+      localStorage.setItem('reconecta_entrada', entradaAtual);
       const url = new URL(location.href);
       url.searchParams.set('inicio', i);
       url.searchParams.set('fim', f);
+      if (entradaAtual === 'todas') url.searchParams.delete('entrada');
+      else url.searchParams.set('entrada', entradaAtual);
       history.replaceState(null, '', url.toString());
       carregar();
     }
@@ -268,14 +297,34 @@
         </div>`;
 
       // ---- Cards A/B/C (teste de entrada) — so quem tem email valido ----
+      // Sempre comparativos do periodo INTEIRO (independente do filtro).
+      // Cada card mostra contagem, %, e as taxas: inicio, termino, conversao.
       const ab = m.ab_entradas || { a: 0, b: 0, c: 0 };
+      const abm = m.ab_metricas || { a: {}, b: {}, c: {} };
       const abTotal = (ab.a || 0) + (ab.b || 0) + (ab.c || 0);
       const pctAB = (n) => (abTotal ? Math.round((n / abTotal) * 1000) / 10 : 0);
+      const filtroEntrada = (m.filtro && m.filtro.entrada) || 'todas';
+      const cardAB = (letra) => {
+        const met = abm[letra] || {};
+        const sel = filtroEntrada === letra ? 'ab-selecionada' : '';
+        const taxas = `
+          <div class="ab-taxas">
+            Início <b>${met.taxa_inicio || 0}%</b> · Término <b>${met.taxa_termino || 0}%</b><br>
+            Conv. <b>${met.taxa_conversao || 0}%</b>
+          </div>`;
+        return `
+          <div class="card ${sel}">
+            <div class="num">${ab[letra] || 0}</div>
+            <div class="pct">${pctAB(ab[letra] || 0)}%</div>
+            <div class="lbl">Entrada ${letra.toUpperCase()}</div>
+            ${taxas}
+          </div>`;
+      };
       const cardsAB = `
         <div class="cards">
-          ${card(ab.a || 0, 'Entrada A', pctAB(ab.a || 0))}
-          ${card(ab.b || 0, 'Entrada B', pctAB(ab.b || 0))}
-          ${card(ab.c || 0, 'Entrada C', pctAB(ab.c || 0))}
+          ${cardAB('a')}
+          ${cardAB('b')}
+          ${cardAB('c')}
         </div>`;
 
       // ---- Desenho do funil (sessões) + pagamento ----
@@ -325,13 +374,18 @@
         : `<div class="aviso">⏳ Nenhum pagamento recebido ainda. Assim que o time apontar o webhook do Guru pra <code>/api/webhook/pagamento</code>, Pix, cartão e reembolso aparecem aqui sozinhos.</div>`;
 
       // ---- Funil por pergunta (P1..P15) ----
+      // Mantem o breakdown A/B/C sempre; se um filtro estiver ativo, destaca
+      // a entrada selecionada em negrito (o valor total do funil ja veio
+      // filtrado do backend).
       const perguntas = (m.funil || []).filter((f) => /^p\d+$/.test(f.key));
+      const selKey = (filtroEntrada === 'a' || filtroEntrada === 'b' || filtroEntrada === 'c') ? filtroEntrada : null;
+      const abParte = (v, k) => selKey === k ? `<b class="sel">${k.toUpperCase()}: ${v}</b>` : `${k.toUpperCase()}: ${v}`;
       const perguntasHtml = perguntas.length
         ? perguntas.map((f) => {
             const abF = f.ab || { a: 0, b: 0, c: 0 };
             const temAB = (abF.a || abF.b || abF.c);
             const abHtml = temAB
-              ? `<span class="ab-inline">A: ${abF.a || 0} · B: ${abF.b || 0} · C: ${abF.c || 0}</span>`
+              ? `<span class="ab-inline">${abParte(abF.a || 0, 'a')} · ${abParte(abF.b || 0, 'b')} · ${abParte(abF.c || 0, 'c')}</span>`
               : '';
             const nomeHtml = `${f.label}${abHtml}`;
             return barra(
@@ -371,6 +425,13 @@
           <input type="text" id="periodo-inicio" class="periodo-input" />
           <span>até</span>
           <input type="text" id="periodo-fim" class="periodo-input" />
+          <span style="margin-left:10px">Entrada:</span>
+          <select id="entrada-select" class="periodo-input">
+            <option value="todas">Todas</option>
+            <option value="a">Entrada A</option>
+            <option value="b">Entrada B</option>
+            <option value="c">Entrada C</option>
+          </select>
           <button class="btn" onclick="aplicarPeriodo()">Aplicar</button>
         </div>
         ${cards}
@@ -386,6 +447,7 @@
             <span id="invest-fonte" class="invest-fonte"></span>
             <span id="cpl-geral"></span>
           </div>
+          ${filtroEntrada !== 'todas' ? '<div class="invest-obs">Investimento geral da campanha (não filtrado por entrada A/B/C).</div>' : ''}
           <div id="leads-tabela"></div>
         </section>
         <section>
@@ -430,6 +492,8 @@
 
       renderLeads();
       sincronizarPeriodoInputs();
+      const selEntrada = document.getElementById('entrada-select');
+      if (selEntrada) selEntrada.value = entradaAtual;
     }
 
     async function puxarInvestimentoMeta() {

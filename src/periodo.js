@@ -23,4 +23,18 @@ function normalizarPeriodo(query = {}) {
   return { inicio, fim };
 }
 
-module.exports = { normalizarPeriodo };
+// entrada = null (todas) | 'a' | 'b' | 'c'
+function normalizarEntrada(v) {
+  const s = String(v == null ? '' : v).toLowerCase().trim();
+  if (s === 'a' || s === 'b' || s === 'c') return s;
+  return null;
+}
+
+function normalizarFiltros(query = {}) {
+  return {
+    ...normalizarPeriodo(query),
+    entrada: normalizarEntrada(query.entrada),
+  };
+}
+
+module.exports = { normalizarPeriodo, normalizarEntrada, normalizarFiltros };

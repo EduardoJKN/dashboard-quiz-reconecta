@@ -10,9 +10,10 @@
 // ============================================================================
 const { query } = require('./db');
 
-// Regra global de exclusao de testes/internos + filtro de periodo aplicados
-// em UMA CTE 'base' que serve pra todas as queries. Assim ninguem escapa.
-// Datas parametrizadas ($1 = inicio, $2 = fim).
+// Regra global de exclusao de testes/internos + filtro de periodo + filtro
+// opcional de entrada A/B/C aplicados em UMA CTE 'base' que serve pra todas
+// as queries. Assim ninguem escapa.
+// Parametros: $1 = inicio, $2 = fim, $3 = entrada ('a'|'b'|'c'|NULL=todas).
 const BASE_CTE = `
   WITH base AS (
     SELECT *
@@ -22,6 +23,10 @@ const BASE_CTE = `
       AND COALESCE(email, '') NOT ILIKE '%reconecta%'
       AND COALESCE(primeiro_evento, ultimo_evento) >= $1::date
       AND COALESCE(primeiro_evento, ultimo_evento) <  ($2::date + interval '1 day')
+      AND (
+        $3::text IS NULL
+        OR LOWER(TRIM(ab_entrada)) = $3::text
+      )
   )
 `;
 
@@ -130,17 +135,46 @@ const SQL_AB_PERGUNTAS = `
   ORDER BY gs.n, entrada
 `;
 
-async function carregarFunilQuiz({ inicio, fim } = {}) {
-  const params = [inicio, fim];
-  const [resumo, aband, abandForm, origem, perguntas, perfis, abResumo, abPerguntas] = await Promise.all([
-    query(SQL_RESUMO, params),
-    query(SQL_ABANDONO_PERGUNTA, params),
-    query(SQL_ABANDONO_FORM, params),
-    query(SQL_ORIGEM, params),
-    query(SQL_PERGUNTAS_ALCANCE, params),
-    query(SQL_PERFIS, params),
-    query(SQL_AB_RESUMO, params),
-    query(SQL_AB_PERGUNTAS, params),
+// Metricas por entrada A/B/C do periodo INTEIRO (independente do filtro
+// selecionado), pra os cards do topo servirem de comparativo. As taxas
+// (inicio/termino/conversao) sao calculadas em JS a partir desses agregados.
+const SQL_AB_METRICAS = `
+  SELECT
+    LOWER(TRIM(ab_entrada)) AS entrada,
+    COUNT(*)::int                                    AS abriram,
+    COUNT(*) FILTER (WHERE iniciou)::int             AS iniciaram,
+    COUNT(*) FILTER (WHERE max_pergunta >= 15)::int  AS terminaram,
+    COUNT(*) FILTER (WHERE virou_lead)::int          AS converteram
+  FROM funil_quiz.quiz_sessoes
+  WHERE NULLIF(TRIM(ab_entrada), '') IS NOT NULL
+    AND LOWER(TRIM(ab_entrada)) IN ('a', 'b', 'c')
+    AND NULLIF(TRIM(email), '') IS NOT NULL
+    AND COALESCE(email, '') NOT ILIKE '%teste%'
+    AND COALESCE(email, '') NOT ILIKE '%reconecta%'
+    AND COALESCE(primeiro_evento, ultimo_evento) >= $1::date
+    AND COALESCE(primeiro_evento, ultimo_evento) <  ($2::date + interval '1 day')
+  GROUP BY 1
+  ORDER BY 1
+`;
+
+async function carregarFunilQuiz({ inicio, fim, entrada = null } = {}) {
+  // BASE_CTE recebe entrada via $3. Queries A/B/C (SQL_AB_*) NAO usam BASE_CTE
+  // — sao sempre calculadas pro periodo inteiro pra servirem de comparativo.
+  const paramsBase = [inicio, fim, entrada];
+  const paramsAB = [inicio, fim];
+  const [
+    resumo, aband, abandForm, origem, perguntas, perfis,
+    abResumo, abPerguntas, abMetricas,
+  ] = await Promise.all([
+    query(SQL_RESUMO, paramsBase),
+    query(SQL_ABANDONO_PERGUNTA, paramsBase),
+    query(SQL_ABANDONO_FORM, paramsBase),
+    query(SQL_ORIGEM, paramsBase),
+    query(SQL_PERGUNTAS_ALCANCE, paramsBase),
+    query(SQL_PERFIS, paramsBase),
+    query(SQL_AB_RESUMO, paramsAB),
+    query(SQL_AB_PERGUNTAS, paramsAB),
+    query(SQL_AB_METRICAS, paramsAB),
   ]);
   const r = resumo.rows[0] || {};
   const abandonoForm = (abandForm.rows[0] && abandForm.rows[0].abandono_formulario) || 0;
@@ -162,6 +196,30 @@ async function carregarFunilQuiz({ inicio, fim } = {}) {
     }
   }
 
+  const pct1 = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : 0);
+  const zeroMet = () => ({
+    abriram: 0, iniciaram: 0, terminaram: 0, converteram: 0,
+    taxa_inicio: 0, taxa_termino: 0, taxa_conversao: 0,
+  });
+  const ab_metricas = { a: zeroMet(), b: zeroMet(), c: zeroMet() };
+  for (const row of abMetricas.rows) {
+    const k = row.entrada;
+    if (k !== 'a' && k !== 'b' && k !== 'c') continue;
+    const abriram = row.abriram || 0;
+    const iniciaram = row.iniciaram || 0;
+    const terminaram = row.terminaram || 0;
+    const converteram = row.converteram || 0;
+    ab_metricas[k] = {
+      abriram,
+      iniciaram,
+      terminaram,
+      converteram,
+      taxa_inicio: pct1(iniciaram, abriram),
+      taxa_termino: pct1(terminaram, abriram),
+      taxa_conversao: pct1(converteram, abriram),
+    };
+  }
+
   return {
     total_sessoes: r.abriram || 0,
     totais: {
@@ -179,8 +237,9 @@ async function carregarFunilQuiz({ inicio, fim } = {}) {
     abandono_formulario: abandonoForm,
     origens: origem.rows,           // [{ origem, sessoes, leads, compras }]
     perfis: perfis.rows,            // [{ nome, count }] — so agregado
-    ab_entradas,                    // { a, b, c } — so quem tem email valido
+    ab_entradas,                    // { a, b, c } — sessoes com email valido
     perguntas_ab,                   // [{ pergunta, a, b, c }] para P1..P15
+    ab_metricas,                    // { a: {abriram,iniciaram,terminaram,converteram,taxa_*}, b, c }
   };
 }
 

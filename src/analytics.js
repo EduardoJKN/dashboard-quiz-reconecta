@@ -110,7 +110,7 @@ function lerEventos() {
 }
 
 // --- Agrega tudo num objeto pro dashboard ------------------------------------
-async function metricas({ inicio, fim } = {}) {
+async function metricas({ inicio, fim, entrada = null } = {}) {
   const eventos = lerEventos();
   const etapas = etapasFunil();
   const indexDe = {};
@@ -206,7 +206,7 @@ async function metricas({ inicio, fim } = {}) {
   // (funil_origem = 'QUIZ'). Se falhar, mantem o valor do funil local.
   if (process.env.DATABASE_URL) {
     try {
-      totais.leads = await carregarLeads({ inicio, fim });
+      totais.leads = await carregarLeads({ inicio, fim, entrada });
     } catch (e) {
       console.error('[analytics] falha ao ler leads do Postgres, usando fallback local:', e.message);
     }
@@ -257,7 +257,7 @@ async function metricas({ inicio, fim } = {}) {
   let pagamento = pagamentoLocal;
   if (process.env.DATABASE_URL) {
     try {
-      pagamento = await carregarPagamento({ inicio, fim });
+      pagamento = await carregarPagamento({ inicio, fim, entrada });
     } catch (e) {
       console.error('[analytics] falha ao ler pagamento do Postgres, usando fallback local:', e.message);
       pagamento = pagamentoLocal;
@@ -329,9 +329,14 @@ async function metricas({ inicio, fim } = {}) {
   let funilFinal = null;    // idem
   let perfisFinal = null;   // idem
   let abEntradas = { a: 0, b: 0, c: 0 }; // teste A/B/C (so quem tem email valido)
+  const zeroMet = () => ({
+    abriram: 0, iniciaram: 0, terminaram: 0, converteram: 0,
+    taxa_inicio: 0, taxa_termino: 0, taxa_conversao: 0,
+  });
+  let abMetricas = { a: zeroMet(), b: zeroMet(), c: zeroMet() };
   if (process.env.DATABASE_URL) {
     try {
-      const fq = await carregarFunilQuiz({ inicio, fim });
+      const fq = await carregarFunilQuiz({ inicio, fim, entrada });
       totalSessoesFinal = fq.total_sessoes;
       totais.visitas = fq.totais.visitas;
       totais.iniciaram = fq.totais.iniciaram;
@@ -429,6 +434,13 @@ async function metricas({ inicio, fim } = {}) {
           c: fq.ab_entradas.c || 0,
         };
       }
+      if (fq.ab_metricas) {
+        abMetricas = {
+          a: fq.ab_metricas.a || zeroMet(),
+          b: fq.ab_metricas.b || zeroMet(),
+          c: fq.ab_metricas.c || zeroMet(),
+        };
+      }
 
       // perfis: distribuicao vinda da coluna 'perfil' em funil_quiz.quiz_sessoes
       // entre quem chegou ao diagnostico. Se a query nao trouxer nada, mantem
@@ -460,6 +472,7 @@ async function metricas({ inicio, fim } = {}) {
   return {
     gerado_em: Date.now(),
     periodo: { inicio, fim },
+    filtro: { inicio, fim, entrada: entrada || 'todas' },
     total_sessoes: totalSessoesFinal,
     totais,
     conversao,
@@ -470,6 +483,7 @@ async function metricas({ inicio, fim } = {}) {
     abandono: abandonoFinal || abandono.filter((a) => a.count > 0).sort((a, b) => b.count - a.count),
     perfis: perfisFinal || perfis,
     ab_entradas: abEntradas,
+    ab_metricas: abMetricas,
   };
 }
 

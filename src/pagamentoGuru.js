@@ -24,8 +24,9 @@ const STATUS_PAGOS = new Set([
 const REGEX_REEMBOLSO = /(refund|refunded|reembolso|reimbursed|chargeback|estorno)/i;
 
 // Regra global de exclusao de testes/internos + filtro de periodo por
-// COALESCE(guru_confirmed_at, guru_created_at, received_at). Datas
-// parametrizadas ($1 = inicio, $2 = fim).
+// COALESCE(guru_confirmed_at, guru_created_at, received_at). Parametros:
+// $1 = inicio, $2 = fim, $3 = entrada opcional ('a'|'b'|'c'|NULL). Quando
+// entrada setada, casa customer_email com funil_quiz.quiz_sessoes.email.
 const SQL = `
   SELECT
     id,
@@ -43,6 +44,18 @@ const SQL = `
     AND COALESCE(customer_email, '') NOT ILIKE '%reconecta%'
     AND COALESCE(guru_confirmed_at, guru_created_at, received_at) >= $1::date
     AND COALESCE(guru_confirmed_at, guru_created_at, received_at) <  ($2::date + interval '1 day')
+    AND (
+      $3::text IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM funil_quiz.quiz_sessoes qs
+        WHERE LOWER(TRIM(qs.ab_entrada)) = $3::text
+          AND NULLIF(TRIM(qs.email), '') IS NOT NULL
+          AND COALESCE(qs.email, '') NOT ILIKE '%teste%'
+          AND COALESCE(qs.email, '') NOT ILIKE '%reconecta%'
+          AND LOWER(TRIM(qs.email)) = LOWER(TRIM(financeiro.guru_log_quiz.customer_email))
+      )
+    )
   ORDER BY COALESCE(guru_confirmed_at, guru_created_at, received_at) ASC
 `;
 
@@ -65,8 +78,8 @@ function pct(a, b) {
   return b ? Math.round((a / b) * 1000) / 10 : 0;
 }
 
-async function carregarPagamento({ inicio, fim } = {}) {
-  const { rows } = await query(SQL, [inicio, fim]);
+async function carregarPagamento({ inicio, fim, entrada = null } = {}) {
+  const { rows } = await query(SQL, [inicio, fim, entrada]);
 
   const vistoPago = new Set();
   const vistoReemb = new Set();
