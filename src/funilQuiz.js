@@ -17,7 +17,8 @@ const BASE_CTE = `
   WITH base AS (
     SELECT *
     FROM funil_quiz.quiz_sessoes
-    WHERE COALESCE(email, '') NOT ILIKE '%teste%'
+    WHERE NULLIF(TRIM(email), '') IS NOT NULL
+      AND COALESCE(email, '') NOT ILIKE '%teste%'
       AND COALESCE(email, '') NOT ILIKE '%reconecta%'
       AND COALESCE(primeiro_evento, ultimo_evento) >= $1::date
       AND COALESCE(primeiro_evento, ultimo_evento) <  ($2::date + interval '1 day')
