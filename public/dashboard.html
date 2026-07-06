@@ -279,17 +279,19 @@
       const c = m.conversao;
       const pg = m.pagamento || {};
       const semDados = m.total_sessoes === 0;
-      const base = stage(m, 'visita').sessoes || 1;
+      const base = stage(m, 'visitas_pagina').sessoes || stage(m, 'visita').sessoes || 1;
       const pctB = (n) => (base ? Math.round((n / base) * 1000) / 10 : 0);
 
       // ---- Cards de números-chave (número + %) ----
-      const bV = t.visitas || 1;
+      // Base do topo: 'Visitas na página' quando > 0, senão 'Abriu o quiz'.
+      const bV = t.visitas_pagina || t.visitas || 1;
       const pctV = (n) => Math.round((n / bV) * 1000) / 10;
       const esperando = pg.esperando_pagamento || 0;
       const pctEsperando = t.compras ? Math.round((esperando / t.compras) * 1000) / 10 : 0;
       const cards = `
         <div class="cards">
-          ${card(t.visitas, 'Abriram o quiz', 100)}
+          ${card(t.visitas_pagina || 0, 'Visitas na página', 100)}
+          ${card(t.visitas, 'Abriram o quiz', pctV(t.visitas))}
           ${card(t.iniciaram, 'Começaram', pctV(t.iniciaram))}
           ${card(t.leads, 'Leads (formulário)', pctV(t.leads))}
           ${card(t.resultados, 'Viram o diagnóstico', pctV(t.resultados))}
@@ -331,7 +333,7 @@
         </div>`;
 
       // ---- Desenho do funil (sessões) + pagamento ----
-      const ordem = ['visita', 'iniciou', 'captura', 'lead', 'resultado', 'compra', 'esperando_pagamento', 'pdf'];
+      const ordem = ['visitas_pagina', 'visita', 'iniciou', 'captura', 'lead', 'resultado', 'compra', 'esperando_pagamento', 'pdf'];
       let desenho = ordem.map((k) => {
         const s = stage(m, k);
         return fdRow(s.label, s.sessoes, s.pct_topo, s.abandonaram, false);

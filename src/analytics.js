@@ -72,6 +72,7 @@ function bucketFaturamento(v) {
 // --- Ordem das etapas do funil (sessões) -------------------------------------
 function etapasFunil() {
   const et = [
+    { key: 'visitas_pagina', label: 'Visitas na página' },
     { key: 'visita', label: 'Abriu o quiz' },
     { key: 'iniciou', label: 'Começou a responder' },
   ];
@@ -195,6 +196,7 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
   const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : 0);
   const leads = get('lead');
   const totais = {
+    visitas_pagina: 0,
     visitas: get('visita'),
     iniciaram: get('iniciou'),
     leads,
@@ -340,6 +342,7 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
     try {
       const fq = await carregarFunilQuiz({ inicio, fim, entrada });
       totalSessoesFinal = fq.total_sessoes;
+      totais.visitas_pagina = fq.visitas_pagina || 0;
       totais.visitas = fq.totais.visitas;
       totais.iniciaram = fq.totais.iniciaram;
       totais.resultados = fq.totais.resultados;
@@ -355,6 +358,7 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
       const abPergunta = {};
       for (const r of (fq.perguntas_ab || [])) abPergunta[r.pergunta] = { a: r.a || 0, b: r.b || 0, c: r.c || 0 };
       const funilCru = [
+        { key: 'visitas_pagina', label: 'Visitas na página',   sessoes: fq.visitas_pagina || 0 },
         { key: 'visita',    label: 'Abriu o quiz',         sessoes: fq.totais.visitas },
         { key: 'iniciou',   label: 'Começou a responder',  sessoes: fq.totais.iniciaram },
       ];
@@ -373,7 +377,9 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
       funilCru.push({ key: 'esperando_pagamento', label: 'Esperando pagamento', sessoes: (pagamento && pagamento.esperando_pagamento) || 0 });
       funilCru.push({ key: 'pdf',       label: 'PDF gerado',           sessoes: pdfsGerados });
 
-      const baseTopo = funilCru[0].sessoes || 1;
+      // Base do funil: visitas na pagina quando > 0; caso contrario, fallback
+      // pra 'Abriu o quiz' (evita divisao por 0 e inflacao dos %s).
+      const baseTopo = funilCru[0].sessoes || funilCru[1].sessoes || 1;
       funilFinal = funilCru.map((f, i) => {
         const pct_topo = Math.round((f.sessoes / baseTopo) * 1000) / 10;
         if (i === 0) return { ...f, pct_topo: 100, pct_etapa: 100, abandonaram: 0 };

@@ -135,6 +135,53 @@ const SQL_AB_PERGUNTAS = `
   ORDER BY gs.n, entrada
 `;
 
+// Visitas na pagina — vem de funil_quiz.quiz_eventos (event='visita').
+// Nao usa BASE_CTE porque visita acontece ANTES do email ser preenchido.
+//
+// Entrada canonica por sessao: cada session_id vale exatamente por UMA entrada
+// A/B/C (a primeira valida por criado_em ASC). Sem isso a mesma sessao entrava
+// em mais de um bucket A/B/C e o total ficava > soma das partes.
+// Parametros: $1=inicio, $2=fim, $3=entrada ('a'|'b'|'c'|NULL=todas).
+const SQL_VISITAS_PAGINA = `
+  WITH visitas_canonicas AS (
+    SELECT DISTINCT ON (session_id)
+      session_id,
+      LOWER(TRIM(ab_entrada)) AS entrada
+    FROM funil_quiz.quiz_eventos
+    WHERE LOWER(TRIM(event)) = 'visita'
+      AND NULLIF(TRIM(session_id), '') IS NOT NULL
+      AND LOWER(TRIM(ab_entrada)) IN ('a','b','c')
+      AND criado_em >= $1::date
+      AND criado_em <  ($2::date + interval '1 day')
+    ORDER BY session_id, criado_em ASC
+  )
+  SELECT COUNT(*)::int AS visitas
+  FROM visitas_canonicas
+  WHERE ($3::text IS NULL OR entrada = $3::text)
+`;
+
+// Visitas por entrada A/B/C do periodo INTEIRO (sempre, sem filtro), pra o
+// front conseguir mostrar comparativo mesmo com filtro ativo. Usa a MESMA
+// base canonica pra garantir que A + B + C = total 'Todas'.
+const SQL_VISITAS_AB = `
+  WITH visitas_canonicas AS (
+    SELECT DISTINCT ON (session_id)
+      session_id,
+      LOWER(TRIM(ab_entrada)) AS entrada
+    FROM funil_quiz.quiz_eventos
+    WHERE LOWER(TRIM(event)) = 'visita'
+      AND NULLIF(TRIM(session_id), '') IS NOT NULL
+      AND LOWER(TRIM(ab_entrada)) IN ('a','b','c')
+      AND criado_em >= $1::date
+      AND criado_em <  ($2::date + interval '1 day')
+    ORDER BY session_id, criado_em ASC
+  )
+  SELECT entrada, COUNT(*)::int AS visitas
+  FROM visitas_canonicas
+  GROUP BY entrada
+  ORDER BY entrada
+`;
+
 // Metricas por entrada A/B/C do periodo INTEIRO (independente do filtro
 // selecionado), pra os cards do topo servirem de comparativo. As taxas
 // (inicio/termino/conversao) sao calculadas em JS a partir desses agregados.
@@ -162,9 +209,11 @@ async function carregarFunilQuiz({ inicio, fim, entrada = null } = {}) {
   // — sao sempre calculadas pro periodo inteiro pra servirem de comparativo.
   const paramsBase = [inicio, fim, entrada];
   const paramsAB = [inicio, fim];
+  const paramsVisitas = [inicio, fim, entrada];
   const [
     resumo, aband, abandForm, origem, perguntas, perfis,
     abResumo, abPerguntas, abMetricas,
+    visitasPag, visitasAB,
   ] = await Promise.all([
     query(SQL_RESUMO, paramsBase),
     query(SQL_ABANDONO_PERGUNTA, paramsBase),
@@ -175,6 +224,8 @@ async function carregarFunilQuiz({ inicio, fim, entrada = null } = {}) {
     query(SQL_AB_RESUMO, paramsAB),
     query(SQL_AB_PERGUNTAS, paramsAB),
     query(SQL_AB_METRICAS, paramsAB),
+    query(SQL_VISITAS_PAGINA, paramsVisitas),
+    query(SQL_VISITAS_AB, paramsAB),
   ]);
   const r = resumo.rows[0] || {};
   const abandonoForm = (abandForm.rows[0] && abandForm.rows[0].abandono_formulario) || 0;
@@ -220,8 +271,18 @@ async function carregarFunilQuiz({ inicio, fim, entrada = null } = {}) {
     };
   }
 
+  const visitas_pagina = (visitasPag.rows[0] && visitasPag.rows[0].visitas) || 0;
+  const visitas_por_entrada = { a: 0, b: 0, c: 0 };
+  for (const row of visitasAB.rows) {
+    if (row.entrada === 'a' || row.entrada === 'b' || row.entrada === 'c') {
+      visitas_por_entrada[row.entrada] = row.visitas || 0;
+    }
+  }
+
   return {
     total_sessoes: r.abriram || 0,
+    visitas_pagina,
+    visitas_por_entrada,
     totais: {
       visitas: r.abriram || 0,
       iniciaram: r.iniciaram || 0,
