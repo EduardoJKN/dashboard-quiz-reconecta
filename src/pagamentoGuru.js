@@ -83,8 +83,10 @@ async function carregarPagamento({ inicio, fim, entrada = null } = {}) {
 
   const vistoPago = new Set();
   const vistoReemb = new Set();
+  const vistoWaiting = new Set();
   let pix = 0, cartao = 0, boleto = 0, outro = 0;
   let fatBruto = 0, fatReemb = 0, reembolsos = 0;
+  let esperando_pagamento = 0;
 
   for (const row of rows) {
     const status = String(row.status || '').toLowerCase().trim();
@@ -93,6 +95,7 @@ async function carregarPagamento({ inicio, fim, entrada = null } = {}) {
 
     const isReemb = REGEX_REEMBOLSO.test(status);
     const isPago = STATUS_PAGOS.has(status);
+    const isWaiting = status === 'waiting_payment';
 
     if (isReemb) {
       if (chave && vistoReemb.has(chave)) continue;
@@ -111,6 +114,13 @@ async function carregarPagamento({ inicio, fim, entrada = null } = {}) {
       else if (m === 'boleto') boleto++;
       else outro++;
       fatBruto += valor;
+      continue;
+    }
+
+    if (isWaiting) {
+      if (chave && vistoWaiting.has(chave)) continue;
+      if (chave) vistoWaiting.add(chave);
+      esperando_pagamento++;
     }
   }
 
@@ -122,6 +132,7 @@ async function carregarPagamento({ inicio, fim, entrada = null } = {}) {
     boleto,
     outro,
     pagos_total,
+    esperando_pagamento,
     reembolsos,
     taxa_reembolso: pct(reembolsos, pagos_total),
     faturamento_bruto: Math.round(fatBruto * 100) / 100,

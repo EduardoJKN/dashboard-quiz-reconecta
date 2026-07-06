@@ -80,6 +80,7 @@ function etapasFunil() {
   et.push({ key: 'lead', label: 'Preencheu os dados' });
   et.push({ key: 'resultado', label: 'Viu o diagnóstico' });
   et.push({ key: 'compra', label: 'Clicou em comprar' });
+  et.push({ key: 'esperando_pagamento', label: 'Esperando pagamento' });
   et.push({ key: 'pdf', label: 'PDF gerado' });
   return et;
 }
@@ -245,6 +246,7 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
     boleto,
     outro: outroPago,
     pagos_total: pagosTotalLocal,
+    esperando_pagamento: 0,
     reembolsos,
     taxa_reembolso: pct(reembolsos, pagosTotalLocal),
     faturamento_bruto: Math.round(fatBruto * 100) / 100,
@@ -368,6 +370,7 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
       funilCru.push({ key: 'lead',      label: 'Preencheu os dados',   sessoes: fq.viraram_lead });
       funilCru.push({ key: 'resultado', label: 'Viu o diagnóstico',    sessoes: fq.totais.resultados });
       funilCru.push({ key: 'compra',    label: 'Clicou em comprar',    sessoes: fq.totais.compras });
+      funilCru.push({ key: 'esperando_pagamento', label: 'Esperando pagamento', sessoes: (pagamento && pagamento.esperando_pagamento) || 0 });
       funilCru.push({ key: 'pdf',       label: 'PDF gerado',           sessoes: pdfsGerados });
 
       const baseTopo = funilCru[0].sessoes || 1;

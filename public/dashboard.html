@@ -285,6 +285,8 @@
       // ---- Cards de números-chave (número + %) ----
       const bV = t.visitas || 1;
       const pctV = (n) => Math.round((n / bV) * 1000) / 10;
+      const esperando = pg.esperando_pagamento || 0;
+      const pctEsperando = t.compras ? Math.round((esperando / t.compras) * 1000) / 10 : 0;
       const cards = `
         <div class="cards">
           ${card(t.visitas, 'Abriram o quiz', 100)}
@@ -292,6 +294,7 @@
           ${card(t.leads, 'Leads (formulário)', pctV(t.leads))}
           ${card(t.resultados, 'Viram o diagnóstico', pctV(t.resultados))}
           ${card(t.compras, 'Clicaram comprar', pctV(t.compras))}
+          ${card(esperando, 'Esperando pagamento', pctEsperando)}
           ${card(pg.pagos_total || 0, 'Pagos (Pix + cartão)', pctV(pg.pagos_total || 0), 'ouro')}
           ${card(c.geral + '%', 'Conversão geral<br>(abriu → PDF)', null, 'destaque')}
         </div>`;
@@ -328,7 +331,7 @@
         </div>`;
 
       // ---- Desenho do funil (sessões) + pagamento ----
-      const ordem = ['visita', 'iniciou', 'captura', 'lead', 'resultado', 'compra', 'pdf'];
+      const ordem = ['visita', 'iniciou', 'captura', 'lead', 'resultado', 'compra', 'esperando_pagamento', 'pdf'];
       let desenho = ordem.map((k) => {
         const s = stage(m, k);
         return fdRow(s.label, s.sessoes, s.pct_topo, s.abandonaram, false);
