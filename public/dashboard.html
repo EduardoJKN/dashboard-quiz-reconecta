@@ -123,9 +123,38 @@
     .tbl-utm .badge-sim { display: inline-block; padding: 1px 8px; border-radius: 10px; background: #e2f3ea; color: var(--verde); font-weight: bold; font-size: 11px; }
     .tbl-utm .badge-nao { display: inline-block; padding: 1px 8px; border-radius: 10px; background: #f3ead9; color: var(--cinza); font-size: 11px; }
     /* Filtros internos da seção */
-    .utm-filtros { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 14px; font-size: 12px; color: #6b5e57; }
-    .utm-filtros select { padding: 5px 8px; border: 1px solid #d8c6a8; border-radius: 8px; font-family: inherit; font-size: 12px; background: #fff; max-width: 460px; min-width: 220px; }
-    .utm-filtros .lbl { color: var(--cinza); }
+    .utm-filtros {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px 18px;
+      margin: 12px 0 16px;
+      font-size: 12px;
+    }
+    @media (max-width: 640px) {
+      .utm-filtros { grid-template-columns: 1fr; }
+    }
+    .utm-filtro-item {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      min-width: 0;
+    }
+    .utm-filtro-item .lbl {
+      color: var(--vinho);
+      font-weight: bold;
+      font-size: 11px;
+      line-height: 1.2;
+    }
+    .utm-filtro-item select {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid #d8c6a8;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 12px;
+      background: #fff;
+      box-sizing: border-box;
+    }
     /* Cards do bloco (compactos) */
     .utm-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 4px; }
     .utm-card { background: #faf5ec; border: 1px solid #ecddc4; border-radius: 10px; padding: 10px 12px; text-align: center; }
@@ -136,8 +165,28 @@
     /* Grafico simples (Leads x Compras por Campanha) — abaixo da tabela */
     .utm-graf { margin: 28px 0 6px; }
     .utm-graf h4 { font-size: 13px; color: var(--vinho); margin-bottom: 8px; }
-    .utm-graf .g-row { display: grid; grid-template-columns: 190px 1fr 130px; gap: 8px; align-items: center; margin-bottom: 6px; }
-    .utm-graf .g-nome { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .utm-graf .g-row {
+      display: grid;
+      grid-template-columns: minmax(220px, 300px) 1fr minmax(108px, 128px);
+      gap: 10px 12px;
+      align-items: start;
+      margin-bottom: 10px;
+    }
+    .utm-graf .g-nome {
+      font-size: 12px;
+      line-height: 1.4;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    @media (max-width: 720px) {
+      .utm-graf .g-row { grid-template-columns: 1fr; gap: 4px; }
+      .utm-graf .g-val { text-align: left; }
+    }
     .utm-graf .g-bars { display: flex; flex-direction: column; gap: 3px; }
     .utm-graf .g-bar { height: 12px; border-radius: 4px; min-width: 2px; }
     .utm-graf .g-bar.leads { background: linear-gradient(90deg, var(--vinho), #7a2a2a); }
@@ -508,10 +557,22 @@
         </select>`;
       return `
         <div class="utm-filtros">
-          <span class="lbl">Campanha:</span> ${sel('utm-f-campaign', f.campaign, gruposCamp)}
-          <span class="lbl">Criativo:</span> ${sel('utm-f-content',  f.content,  gruposCont)}
-          <span class="lbl">Fonte:</span>    ${sel('utm-f-term',     f.term,     gruposTerm)}
-          <span class="lbl">Método:</span>   ${selMet}
+          <div class="utm-filtro-item">
+            <label class="lbl" for="utm-f-campaign">Campanha</label>
+            ${sel('utm-f-campaign', f.campaign, gruposCamp)}
+          </div>
+          <div class="utm-filtro-item">
+            <label class="lbl" for="utm-f-content">Criativo</label>
+            ${sel('utm-f-content', f.content, gruposCont)}
+          </div>
+          <div class="utm-filtro-item">
+            <label class="lbl" for="utm-f-term">Fonte</label>
+            ${sel('utm-f-term', f.term, gruposTerm)}
+          </div>
+          <div class="utm-filtro-item">
+            <label class="lbl" for="utm-f-metodo">Método</label>
+            ${selMet}
+          </div>
         </div>`;
     }
 
