@@ -108,9 +108,17 @@
     .tbl-utm td.num, .tbl-utm th.num { text-align: right; white-space: nowrap; }
     .tbl-utm td.campv, .tbl-utm td.cont {
       max-width: 200px; min-width: 110px;
-      white-space: normal; overflow-wrap: anywhere; word-break: break-word;
+      vertical-align: top;
+    }
+    .tbl-utm .utm-cell-clamp {
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
       line-height: 1.35;
-      display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
     }
     .tbl-utm td.pageurl {
       max-width: 180px; min-width: 90px;
@@ -614,9 +622,9 @@
         return `
         <tr>
           <td class="emailc" title="${escHtml(d.email)}">${escHtml(d.email)}</td>
-          <td class="campv" title="${escHtml(d.utm_campaign)}">${escHtml(d.utm_campaign)}</td>
-          <td class="cont"  title="${escHtml(d.utm_content)}">${escHtml(d.utm_content)}</td>
-          <td>${escHtml(d.utm_term)}</td>
+          <td class="campv" title="${escHtml(d.utm_campaign)}"><span class="utm-cell-clamp">${escHtml(d.utm_campaign)}</span></td>
+          <td class="cont" title="${escHtml(d.utm_content)}"><span class="utm-cell-clamp">${escHtml(d.utm_content)}</span></td>
+          <td title="${escHtml(d.utm_term)}">${escHtml(d.utm_term)}</td>
           <td class="pageurl" title="${escHtml(d.page_url)}">${escHtml(d.page_url)}</td>
           <td>${d.comprou ? '<span class="badge-sim">Sim</span>' : '<span class="badge-nao">Não</span>'}</td>
           <td class="num">${d.comprou ? 'R$ ' + fmtBRL(d.total_value) : '—'}</td>
