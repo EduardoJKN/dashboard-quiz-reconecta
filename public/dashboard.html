@@ -133,10 +133,13 @@
     /* Filtros internos da seção */
     .utm-filtros {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 12px 18px;
       margin: 12px 0 16px;
       font-size: 12px;
+    }
+    @media (max-width: 900px) {
+      .utm-filtros { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 640px) {
       .utm-filtros { grid-template-columns: 1fr; }
@@ -191,6 +194,13 @@
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
+    .utm-graf .g-nome-entrada {
+      max-width: none;
+      -webkit-line-clamp: unset;
+      display: block;
+      white-space: nowrap;
+    }
+    .utm-graf-entrada { margin-top: 18px; }
     @media (max-width: 720px) {
       .utm-graf .g-row { grid-template-columns: 1fr; gap: 4px; }
       .utm-graf .g-val { text-align: left; }
@@ -391,7 +401,19 @@
     // Estado dos filtros internos da seção (nao mexem na URL global).
     // campanha/criativo/fonte casam com utm_campaign/utm_content/utm_term.
     // metodo = 'todos' | 'pix' | 'credit_card' (aplicado sobre payment_method).
-    const utmFiltrosInternos = { campaign: 'todas', content: 'todas', term: 'todas', metodo: 'todos' };
+    const utmFiltrosInternos = { entrada: 'todas', campaign: 'todas', content: 'todas', term: 'todas', metodo: 'todos' };
+
+    function labelEntrada(e) {
+      if (e === 'a') return 'Entrada A';
+      if (e === 'b') return 'Entrada B';
+      if (e === 'c') return 'Entrada C';
+      return 'Sem entrada';
+    }
+
+    function _entradaKey(d) {
+      const e = d.entrada;
+      return (e === 'a' || e === 'b' || e === 'c') ? e : 'sem';
+    }
 
     function labelMetodo(m) {
       const s = String(m || '').toLowerCase();
@@ -451,6 +473,33 @@
       return [...m.values()].sort((a, b) => (b.leads - a.leads) || _cmpBR(a.chave, b.chave));
     }
 
+    function _metricasEntradaOpcoes(detalhes) {
+      const defs = [
+        { key: 'a', label: 'Entrada A' },
+        { key: 'b', label: 'Entrada B' },
+        { key: 'c', label: 'Entrada C' },
+        { key: 'sem', label: 'Sem entrada' },
+      ];
+      const map = Object.fromEntries(defs.map((d) => [d.key, { ...d, leads: 0, compradores: 0, valorAprovado: 0 }]));
+      let totCompradores = 0;
+      let totValor = 0;
+      for (const d of detalhes) {
+        const k = _entradaKey(d);
+        if (!map[k]) continue;
+        map[k].leads += 1;
+        if (d.comprou) {
+          map[k].compradores += 1;
+          map[k].valorAprovado = Math.round((map[k].valorAprovado + Number(d.total_value || 0)) * 100) / 100;
+          totCompradores += 1;
+          totValor += Number(d.total_value || 0);
+        }
+      }
+      return {
+        tot: { leads: detalhes.length, compradores: totCompradores, valorAprovado: Math.round(totValor * 100) / 100 },
+        opcoes: defs.map((d) => map[d.key]),
+      };
+    }
+
     function _metricasMetodo(detalhes) {
       const pix = { leads: 0, compradores: 0, valor: 0 };
       const card = { leads: 0, compradores: 0, valor: 0 };
@@ -472,12 +521,14 @@
     // (usado ao montar opcoes com metricas em cascata).
     function _filtrarDetalhesParcial(detalhes, parcial) {
       const f = {
+        entrada: parcial.entrada !== undefined ? parcial.entrada : utmFiltrosInternos.entrada,
         campaign: parcial.campaign !== undefined ? parcial.campaign : utmFiltrosInternos.campaign,
         content: parcial.content !== undefined ? parcial.content : utmFiltrosInternos.content,
         term: parcial.term !== undefined ? parcial.term : utmFiltrosInternos.term,
         metodo: parcial.metodo !== undefined ? parcial.metodo : utmFiltrosInternos.metodo,
       };
       return detalhes.filter((d) => {
+        if (f.entrada !== 'todas' && f.entrada != null && _entradaKey(d) !== f.entrada) return false;
         if (f.campaign !== 'todas' && f.campaign != null && d.utm_campaign !== f.campaign) return false;
         if (f.content !== 'todas' && f.content != null && d.utm_content !== f.content) return false;
         if (f.term !== 'todas' && f.term != null && d.utm_term !== f.term) return false;
@@ -500,6 +551,7 @@
     function _filtrarDetalhes(detalhes) {
       const f = utmFiltrosInternos;
       return detalhes.filter((d) => {
+        if (f.entrada !== 'todas' && _entradaKey(d) !== f.entrada) return false;
         if (f.campaign !== 'todas' && d.utm_campaign !== f.campaign) return false;
         if (f.content  !== 'todas' && d.utm_content  !== f.content)  return false;
         if (f.term     !== 'todas' && d.utm_term     !== f.term)     return false;
@@ -538,12 +590,27 @@
         </div>`;
     }
 
+    function _agruparPorEntrada(detalhes) {
+      const ordem = ['a', 'b', 'c', 'sem'];
+      const m = new Map(ordem.map((k) => [k, { entrada: k, label: labelEntrada(k === 'sem' ? null : k), leads: 0, compras: 0 }]));
+      for (const d of detalhes) {
+        const k = _entradaKey(d);
+        const g = m.get(k);
+        if (!g) continue;
+        g.leads++;
+        if (d.comprou) g.compras++;
+      }
+      return ordem.map((k) => m.get(k)).filter((g) => g.leads > 0);
+    }
+
     function _renderFiltrosUtm(detBase) {
       const f = utmFiltrosInternos;
+      const baseEnt = _filtrarDetalhesParcial(detBase, { entrada: 'todas' });
       const baseCamp = _filtrarDetalhesParcial(detBase, { campaign: 'todas' });
       const baseCont = _filtrarDetalhesParcial(detBase, { content: 'todas' });
       const baseTerm = _filtrarDetalhesParcial(detBase, { term: 'todas' });
       const baseMet = _filtrarDetalhesParcial(detBase, { metodo: 'todos' });
+      const metEnt = _metricasEntradaOpcoes(baseEnt);
       const gruposCamp = _metricasGrupo(baseCamp, 'utm_campaign');
       const gruposCont = _metricasGrupo(baseCont, 'utm_content');
       const gruposTerm = _metricasGrupo(baseTerm, 'utm_term');
@@ -553,6 +620,11 @@
         <select id="${id}" onchange="onUtmFiltroChange('${id}', this.value)">
           <option value="todas"${cur === 'todas' ? ' selected' : ''}>Todas</option>
           ${grupos.map((g) => opt(g.chave, cur, _labelMetricaOpcao(g.chave, g.leads, g.compradores, g.valorAprovado))).join('')}
+        </select>`;
+      const selEnt = `
+        <select id="utm-f-entrada" onchange="onUtmFiltroChange('utm-f-entrada', this.value)">
+          <option value="todas"${f.entrada === 'todas' ? ' selected' : ''}>${_escMetricaMet('Todas', metEnt.tot.leads, metEnt.tot.compradores, metEnt.tot.valorAprovado)}</option>
+          ${metEnt.opcoes.map((o) => opt(o.key, f.entrada, _labelMetricaOpcao(o.label, o.leads, o.compradores, o.valorAprovado))).join('')}
         </select>`;
       const cur = f.metodo;
       const totCompradores = baseMet.reduce((s, d) => s + (d.comprou ? 1 : 0), 0);
@@ -565,6 +637,10 @@
         </select>`;
       return `
         <div class="utm-filtros">
+          <div class="utm-filtro-item">
+            <label class="lbl" for="utm-f-entrada">Entrada</label>
+            ${selEnt}
+          </div>
           <div class="utm-filtro-item">
             <label class="lbl" for="utm-f-campaign">Campanha</label>
             ${sel('utm-f-campaign', f.campaign, gruposCamp)}
@@ -586,6 +662,31 @@
 
     function _escMetricaMet(nome, leads, compradores, valor) {
       return escHtml(_labelMetricaOpcao(nome, leads, compradores, valor));
+    }
+
+    function _renderGraficoEntrada(det) {
+      const grupos = _agruparPorEntrada(det);
+      if (!grupos.length) return '';
+      const max = grupos.reduce((m, g) => Math.max(m, g.leads, g.compras), 0) || 1;
+      const linhas = grupos.map((g) => {
+        const wL = Math.max(2, Math.round((g.leads / max) * 100));
+        const wC = Math.max(0, Math.round((g.compras / max) * 100));
+        return `
+          <div class="g-row">
+            <div class="g-nome g-nome-entrada" title="${escHtml(g.label)}">${escHtml(g.label)}</div>
+            <div class="g-bars">
+              <div class="g-bar leads"   style="width:${wL}%"></div>
+              <div class="g-bar compras" style="width:${wC}%"></div>
+            </div>
+            <div class="g-val"><b>${g.leads}</b> leads · <b>${g.compras}</b> compras</div>
+          </div>`;
+      }).join('');
+      return `
+        <div class="utm-graf utm-graf-entrada">
+          <h4>Leads × Compras por Entrada</h4>
+          <div class="g-leg"><span class="sq leads"></span>Leads &nbsp;·&nbsp; <span class="sq compras"></span>Compras</div>
+          ${linhas}
+        </div>`;
     }
 
     function _renderGraficoUtm(det) {
@@ -622,6 +723,7 @@
         return `
         <tr>
           <td class="emailc" title="${escHtml(d.email)}">${escHtml(d.email)}</td>
+          <td>${escHtml(labelEntrada(d.entrada))}</td>
           <td class="campv" title="${escHtml(d.utm_campaign)}"><span class="utm-cell-clamp">${escHtml(d.utm_campaign)}</span></td>
           <td class="cont" title="${escHtml(d.utm_content)}"><span class="utm-cell-clamp">${escHtml(d.utm_content)}</span></td>
           <td title="${escHtml(d.utm_term)}">${escHtml(d.utm_term)}</td>
@@ -637,6 +739,7 @@
             <thead>
               <tr>
                 <th>Email</th>
+                <th>Entrada</th>
                 <th>Campanha</th>
                 <th>Criativo</th>
                 <th>Fonte</th>
@@ -662,6 +765,7 @@
       const elC = document.getElementById('utm-cards');
       const elF = document.getElementById('utm-filtros-wrap');
       const elG = document.getElementById('utm-grafico');
+      const elGE = document.getElementById('utm-grafico-entrada');
       const elT = document.getElementById('utm-tabela');
       const elObs = document.getElementById('utm-obs');
       if (!elC || !elF || !elG || !elT) return;
@@ -669,6 +773,7 @@
       elC.innerHTML = _renderCardsUtm(det);
       elF.innerHTML = _renderFiltrosUtm(detBase);
       elG.innerHTML = _renderGraficoUtm(det);
+      if (elGE) elGE.innerHTML = _renderGraficoEntrada(det);
       elT.innerHTML = _renderTabelaUtm(det);
       if (elObs) {
         elObs.textContent = detBase.length
@@ -679,7 +784,8 @@
 
     // Handler do onchange dos selects internos.
     window.onUtmFiltroChange = function (id, valor) {
-      if (id === 'utm-f-campaign') utmFiltrosInternos.campaign = valor;
+      if (id === 'utm-f-entrada') utmFiltrosInternos.entrada = valor;
+      else if (id === 'utm-f-campaign') utmFiltrosInternos.campaign = valor;
       else if (id === 'utm-f-content') utmFiltrosInternos.content = valor;
       else if (id === 'utm-f-term') utmFiltrosInternos.term = valor;
       else if (id === 'utm-f-metodo') utmFiltrosInternos.metodo = valor;
@@ -689,6 +795,7 @@
 
     // Reseta filtros internos ao trocar periodo/entrada global (nova carga).
     function resetarFiltrosUtmInternos() {
+      utmFiltrosInternos.entrada = 'todas';
       utmFiltrosInternos.campaign = 'todas';
       utmFiltrosInternos.content = 'todas';
       utmFiltrosInternos.term = 'todas';
@@ -783,13 +890,13 @@
       const cap = m.captacao || { tem_origem: false, fontes: [] };
       const capAviso = cap.tem_origem
         ? ''
-        : `<div class="aviso">⏳ As origens ainda não estão chegando. Quando o time incluir a origem/UTM do link no evento de visita (ex.: <code>utm_source=instagram-bio</code>), cada link aparece aqui com número, % e conversão.</div>`;
+        : `<div class="aviso">⏳ Nenhum utm_source registrado nos leads do período. Quando o formulário enviar <code>utm_source</code> (ex.: <code>ig</code>, <code>instagram-bio</code>), cada origem aparece aqui.</div>`;
       const capHtml = cap.fontes.length
         ? cap.fontes.map((f) => barra(
             f.origem, f.pct,
-            `<b>${f.visitas}</b> · ${f.pct}% · ${f.leads} leads (${f.conv_lead}%) · ${f.compras} compras aprovadas`
+            `<b>${f.leads}</b> leads · ${f.pct}% · ${f.compras} compras aprovadas (${f.conv_compra}%)`
           )).join('')
-        : '<div class="vazio">Sem visitas registradas ainda.</div>';
+        : '<div class="vazio">Sem leads registrados no período.</div>';
 
       // ---- Captação de leads (qualidade + custo) ----
       const lt = m.leads_tipos || { classificado: false };
@@ -879,7 +986,7 @@
         </section>
         <section>
           <h2>🔗 Origem dos leads (por link)</h2>
-          <p class="desc">De onde cada sessão veio (primeiro toque): número, % do total e quanto virou lead ou compra aprovada.</p>
+          <p class="desc">De onde cada lead veio (utm_source do formulário): número, % do total e quantos tiveram compra aprovada no Guru.</p>
           ${capAviso}
           ${capHtml}
         </section>
@@ -923,6 +1030,7 @@
           <div id="utm-filtros-wrap"></div>
           <div id="utm-tabela"></div>
           <div id="utm-grafico"></div>
+          <div id="utm-grafico-entrada"></div>
           <div id="utm-obs" class="utm-obs"></div>
         </section>`;
 

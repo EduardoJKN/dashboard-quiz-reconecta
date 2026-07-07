@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { carregarPagamento } = require('./pagamentoGuru');
 const { carregarLeads } = require('./leadsQuiz');
+const { carregarLeadsOrigem } = require('./leadsOrigem');
 const { carregarFunilQuiz } = require('./funilQuiz');
 const { carregarLeadsUtm } = require('./leadsUtm');
 
@@ -372,7 +373,7 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
         });
       }
       funilCru.push({ key: 'captura',   label: 'Chegou no formulário', sessoes: fq.chegaram_form });
-      funilCru.push({ key: 'lead',      label: 'Preencheu os dados',   sessoes: fq.viraram_lead });
+      funilCru.push({ key: 'lead',      label: 'Preencheu os dados',   sessoes: totais.leads });
       funilCru.push({ key: 'resultado', label: 'Viu o diagnóstico',    sessoes: fq.totais.resultados });
       funilCru.push({ key: 'compra',    label: 'Clicou em comprar',    sessoes: fq.totais.compras });
       funilCru.push({ key: 'esperando_pagamento', label: 'Esperando pagamento', sessoes: (pagamento && pagamento.esperando_pagamento) || 0 });
@@ -393,23 +394,28 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
         };
       });
 
-      // captacao a partir das origens (utm_source)
-      const semOrigemChave = 'Sem origem';
-      const totSessoesCap = fq.total_sessoes || 0;
-      captacaoFinal = {
-        tem_origem: fq.origens.some((o) => o.origem && o.origem !== semOrigemChave),
-        fontes: fq.origens
-          .map((o) => ({
-            origem: o.origem === semOrigemChave ? 'Sem origem (direto)' : o.origem,
-            visitas: o.sessoes,
-            leads: o.leads,
-            compras: o.compras_aprovadas || 0,
-            pct: pct(o.sessoes, totSessoesCap),
-            conv_lead: pct(o.leads, o.sessoes),
-            conv_compra: pct(o.compras_aprovadas || 0, o.sessoes),
-          }))
-          .sort((a, b) => b.visitas - a.visitas),
-      };
+      // captacao: origem dos leads via lp_form.leads.utm_source (nao quiz_sessoes).
+      try {
+        const origensLeads = await carregarLeadsOrigem({ inicio, fim, entrada });
+        const totLeadsOrigem = origensLeads.reduce((s, o) => s + (o.leads || 0), 0);
+        const semOrigemChave = 'Sem origem';
+        captacaoFinal = {
+          tem_origem: origensLeads.some((o) => o.origem && o.origem !== semOrigemChave),
+          fontes: origensLeads
+            .map((o) => ({
+              origem: o.origem === semOrigemChave ? 'Sem origem (direto)' : o.origem,
+              visitas: o.leads,
+              leads: o.leads,
+              compras: o.compras_aprovadas || 0,
+              pct: pct(o.leads, totLeadsOrigem),
+              conv_lead: pct(o.leads, totLeadsOrigem),
+              conv_compra: pct(o.compras_aprovadas || 0, o.leads),
+            }))
+            .sort((a, b) => b.leads - a.leads),
+        };
+      } catch (e) {
+        console.error('[analytics] falha ao ler origem dos leads (lp_form.leads):', e.message);
+      }
 
       // abandono: por pergunta + no formulario. Labels a partir de LABEL_PERGUNTA.
       const rotuloPergunta = (n) => {
