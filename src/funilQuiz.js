@@ -60,13 +60,40 @@ const SQL_ABANDONO_FORM = `
   WHERE chegou_formulario AND NOT virou_lead
 `;
 
+// Compras aprovadas no Guru (nao confundir com clicou_comprar).
 const SQL_ORIGEM = `
-  ${BASE_CTE}
+  WITH base AS (
+    SELECT *
+    FROM funil_quiz.quiz_sessoes
+    WHERE NULLIF(TRIM(email), '') IS NOT NULL
+      AND COALESCE(email, '') NOT ILIKE '%teste%'
+      AND COALESCE(email, '') NOT ILIKE '%reconecta%'
+      AND COALESCE(primeiro_evento, ultimo_evento) >= $1::date
+      AND COALESCE(primeiro_evento, ultimo_evento) <  ($2::date + interval '1 day')
+      AND (
+        $3::text IS NULL
+        OR LOWER(TRIM(ab_entrada)) = $3::text
+      )
+  ),
+  compras_aprovadas AS (
+    SELECT DISTINCT LOWER(TRIM(g.customer_email)) AS email_norm
+    FROM financeiro.guru_log_quiz g
+    WHERE LOWER(TRIM(g.status)) = 'approved'
+      AND NULLIF(TRIM(g.customer_email), '') IS NOT NULL
+      AND COALESCE(g.customer_email, '') NOT ILIKE '%teste%'
+      AND COALESCE(g.customer_email, '') NOT ILIKE '%reconecta%'
+      AND COALESCE(g.guru_confirmed_at, g.guru_created_at, g.received_at) >= $1::date
+      AND COALESCE(g.guru_confirmed_at, g.guru_created_at, g.received_at) <  ($2::date + interval '1 day')
+  )
   SELECT
     COALESCE(NULLIF(TRIM(utm_parameters->>'utm_source'), ''), 'Sem origem') AS origem,
-    COUNT(*)::int                                       AS sessoes,
-    COUNT(*) FILTER (WHERE virou_lead)::int             AS leads,
-    COUNT(*) FILTER (WHERE clicou_comprar)::int         AS compras
+    COUNT(*)::int                                                         AS sessoes,
+    COUNT(*) FILTER (WHERE virou_lead)::int                               AS leads,
+    COUNT(*) FILTER (WHERE clicou_comprar)::int                           AS cliques_comprar,
+    COUNT(*) FILTER (WHERE EXISTS (
+      SELECT 1 FROM compras_aprovadas ca
+      WHERE ca.email_norm = LOWER(TRIM(base.email))
+    ))::int                                                               AS compras_aprovadas
   FROM base
   GROUP BY 1
   ORDER BY sessoes DESC
@@ -296,7 +323,7 @@ async function carregarFunilQuiz({ inicio, fim, entrada = null } = {}) {
     perguntas_abandono: aband.rows, // [{ parou_na_pergunta, sessoes }]
     perguntas_alcance: perguntas.rows, // [{ pergunta, sessoes }]
     abandono_formulario: abandonoForm,
-    origens: origem.rows,           // [{ origem, sessoes, leads, compras }]
+    origens: origem.rows,           // [{ origem, sessoes, leads, cliques_comprar, compras_aprovadas }]
     perfis: perfis.rows,            // [{ nome, count }] — so agregado
     ab_entradas,                    // { a, b, c } — sessoes com email valido
     perguntas_ab,                   // [{ pergunta, a, b, c }] para P1..P15

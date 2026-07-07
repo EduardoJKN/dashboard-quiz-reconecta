@@ -99,6 +99,56 @@
     .card.destaque .cpl-linha { color: var(--dourado); border-top-color: rgba(234,210,160,.3); }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
     @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } .fd-row { grid-template-columns: 120px 1fr 96px; } .linha .nome { width: 130px; } .linha .val { width: 110px; } }
+
+    /* Bloco Leads por UTM */
+    .utm-scroll { overflow-x: auto; }
+    .tbl-utm { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .tbl-utm th, .tbl-utm td { padding: 7px 8px; border-bottom: 1px solid #efe3cf; text-align: left; vertical-align: top; }
+    .tbl-utm th { background: #f7efdd; color: var(--vinho); font-weight: bold; position: sticky; top: 0; }
+    .tbl-utm td.num, .tbl-utm th.num { text-align: right; white-space: nowrap; }
+    .tbl-utm td.campv, .tbl-utm td.cont {
+      max-width: 200px; min-width: 110px;
+      white-space: normal; overflow-wrap: anywhere; word-break: break-word;
+      line-height: 1.35;
+      display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .tbl-utm td.pageurl {
+      max-width: 180px; min-width: 90px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .tbl-utm td.emailc {
+      max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .tbl-utm tr:hover td { background: #faf5ec; }
+    .tbl-utm .badge-sim { display: inline-block; padding: 1px 8px; border-radius: 10px; background: #e2f3ea; color: var(--verde); font-weight: bold; font-size: 11px; }
+    .tbl-utm .badge-nao { display: inline-block; padding: 1px 8px; border-radius: 10px; background: #f3ead9; color: var(--cinza); font-size: 11px; }
+    /* Filtros internos da seção */
+    .utm-filtros { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 14px; font-size: 12px; color: #6b5e57; }
+    .utm-filtros select { padding: 5px 8px; border: 1px solid #d8c6a8; border-radius: 8px; font-family: inherit; font-size: 12px; background: #fff; max-width: 460px; min-width: 220px; }
+    .utm-filtros .lbl { color: var(--cinza); }
+    /* Cards do bloco (compactos) */
+    .utm-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 4px; }
+    .utm-card { background: #faf5ec; border: 1px solid #ecddc4; border-radius: 10px; padding: 10px 12px; text-align: center; }
+    .utm-card .num { font-size: 20px; color: var(--vinho); font-weight: bold; }
+    .utm-card .lbl { font-size: 11px; color: var(--cinza); margin-top: 3px; }
+    .utm-card.destaque { background: linear-gradient(135deg, #7a5a10, var(--ouro)); border-color: #b8860b; }
+    .utm-card.destaque .num, .utm-card.destaque .lbl { color: #fff; }
+    /* Grafico simples (Leads x Compras por Campanha) — abaixo da tabela */
+    .utm-graf { margin: 28px 0 6px; }
+    .utm-graf h4 { font-size: 13px; color: var(--vinho); margin-bottom: 8px; }
+    .utm-graf .g-row { display: grid; grid-template-columns: 190px 1fr 130px; gap: 8px; align-items: center; margin-bottom: 6px; }
+    .utm-graf .g-nome { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .utm-graf .g-bars { display: flex; flex-direction: column; gap: 3px; }
+    .utm-graf .g-bar { height: 12px; border-radius: 4px; min-width: 2px; }
+    .utm-graf .g-bar.leads { background: linear-gradient(90deg, var(--vinho), #7a2a2a); }
+    .utm-graf .g-bar.compras { background: linear-gradient(90deg, var(--ouro), #d4a52a); }
+    .utm-graf .g-val { font-size: 11px; text-align: right; color: var(--cinza); }
+    .utm-graf .g-val b { color: var(--texto); }
+    .utm-graf .g-leg { font-size: 11px; color: var(--cinza); margin-bottom: 6px; }
+    .utm-graf .g-leg .sq { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+    .utm-graf .g-leg .sq.leads { background: var(--vinho); }
+    .utm-graf .g-leg .sq.compras { background: var(--ouro); }
+    .utm-obs { font-size: 11px; color: var(--cinza); font-style: italic; margin-top: 4px; }
   </style>
 </head>
 <body>
@@ -273,6 +323,309 @@
       cont.innerHTML = `<div class="cards" style="margin-bottom:0">${html}</div>`;
     }
 
+    // Escape basico pra nao quebrar layout com < / > em valores de UTM
+    function escHtml(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    // ---------- Bloco "Leads e compras por UTM" (interativo) ------------------
+    // Estado dos filtros internos da seção (nao mexem na URL global).
+    // campanha/criativo/fonte casam com utm_campaign/utm_content/utm_term.
+    // metodo = 'todos' | 'pix' | 'credit_card' (aplicado sobre payment_method).
+    const utmFiltrosInternos = { campaign: 'todas', content: 'todas', term: 'todas', metodo: 'todos' };
+
+    function labelMetodo(m) {
+      const s = String(m || '').toLowerCase();
+      if (!s) return '—';
+      // Cobre casos com STRING_AGG concatenado (ex.: "pix, credit_card")
+      const partes = [];
+      if (s.includes('pix')) partes.push('Pix');
+      if (s.includes('credit_card') || s.includes('cartao') || s.includes('cartão') || s.includes('card')) partes.push('Cartão de crédito');
+      if (partes.length) return partes.join(', ');
+      return String(m); // fallback: mostra o valor bruto
+    }
+
+    function fmtDataBR(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function _cmpBR(a, b) {
+      return String(a || '').localeCompare(String(b || ''), 'pt-BR', { sensitivity: 'base' });
+    }
+    function _unicos(list, campo) {
+      const set = new Set();
+      for (const d of list) set.add(d[campo] || '');
+      return [...set].filter((v) => v !== '').sort(_cmpBR);
+    }
+
+    function _resumirTexto(s, max) {
+      const t = String(s == null ? '' : s);
+      const lim = max || 42;
+      if (t.length <= lim) return t;
+      return t.slice(0, lim - 1) + '…';
+    }
+
+    function _labelMetricaOpcao(valor, leads, compradores, valorAprovado) {
+      const nome = _resumirTexto(valor, 44);
+      const leadTxt = leads === 1 ? '1 lead' : leads + ' leads';
+      const compTxt = compradores === 1 ? '1 compra' : compradores + ' compras';
+      const valTxt = valorAprovado > 0 ? ' · R$ ' + fmtBRL(valorAprovado) : '';
+      return nome + ' — ' + leadTxt + ' · ' + compTxt + valTxt;
+    }
+
+    function _metricasGrupo(detalhes, campo) {
+      const m = new Map();
+      for (const d of detalhes) {
+        const chave = d[campo] || '';
+        let g = m.get(chave);
+        if (!g) g = { chave, leads: 0, compradores: 0, valorAprovado: 0 };
+        g.leads += 1;
+        if (d.comprou) {
+          g.compradores += 1;
+          g.valorAprovado = Math.round((g.valorAprovado + Number(d.total_value || 0)) * 100) / 100;
+        }
+        m.set(chave, g);
+      }
+      return [...m.values()].sort((a, b) => (b.leads - a.leads) || _cmpBR(a.chave, b.chave));
+    }
+
+    function _metricasMetodo(detalhes) {
+      const pix = { leads: 0, compradores: 0, valor: 0 };
+      const card = { leads: 0, compradores: 0, valor: 0 };
+      for (const d of detalhes) {
+        if (!d.comprou) continue;
+        const pm = String(d.payment_method || '').toLowerCase();
+        const val = Number(d.total_value || 0);
+        if (pm.includes('pix')) {
+          pix.leads += 1; pix.compradores += 1; pix.valor = Math.round((pix.valor + val) * 100) / 100;
+        }
+        if (pm.includes('credit_card') || pm.includes('cartao') || pm.includes('cartão') || pm.includes('card')) {
+          card.leads += 1; card.compradores += 1; card.valor = Math.round((card.valor + val) * 100) / 100;
+        }
+      }
+      return { pix, card };
+    }
+
+    // Aplica filtros internos; omitir um campo (null) para nao filtrar por ele
+    // (usado ao montar opcoes com metricas em cascata).
+    function _filtrarDetalhesParcial(detalhes, parcial) {
+      const f = {
+        campaign: parcial.campaign !== undefined ? parcial.campaign : utmFiltrosInternos.campaign,
+        content: parcial.content !== undefined ? parcial.content : utmFiltrosInternos.content,
+        term: parcial.term !== undefined ? parcial.term : utmFiltrosInternos.term,
+        metodo: parcial.metodo !== undefined ? parcial.metodo : utmFiltrosInternos.metodo,
+      };
+      return detalhes.filter((d) => {
+        if (f.campaign !== 'todas' && f.campaign != null && d.utm_campaign !== f.campaign) return false;
+        if (f.content !== 'todas' && f.content != null && d.utm_content !== f.content) return false;
+        if (f.term !== 'todas' && f.term != null && d.utm_term !== f.term) return false;
+        if (f.metodo !== 'todos' && f.metodo != null) {
+          if (!d.comprou) return false;
+          const pm = String(d.payment_method || '').toLowerCase();
+          if (f.metodo === 'pix' && !pm.includes('pix')) return false;
+          if (f.metodo === 'credit_card' && !(pm.includes('credit_card') || pm.includes('cartao') || pm.includes('cartão') || pm.includes('card'))) return false;
+        }
+        return true;
+      });
+    }
+
+    // Aplica os selects Campanha/Criativo/Fonte/Método em cima de detalhes.
+    // Método:
+    //   - 'todos'        → nao filtra
+    //   - 'pix'          → so leads compradores cujo payment_method inclui 'pix'
+    //   - 'credit_card'  → idem para 'credit_card'
+    // Leads nao compradores (payment_method vazio) somem quando Método != todos.
+    function _filtrarDetalhes(detalhes) {
+      const f = utmFiltrosInternos;
+      return detalhes.filter((d) => {
+        if (f.campaign !== 'todas' && d.utm_campaign !== f.campaign) return false;
+        if (f.content  !== 'todas' && d.utm_content  !== f.content)  return false;
+        if (f.term     !== 'todas' && d.utm_term     !== f.term)     return false;
+        if (f.metodo !== 'todos') {
+          if (!d.comprou) return false;
+          const pm = String(d.payment_method || '').toLowerCase();
+          if (f.metodo === 'pix' && !pm.includes('pix')) return false;
+          if (f.metodo === 'credit_card' && !(pm.includes('credit_card') || pm.includes('cartao') || pm.includes('cartão') || pm.includes('card'))) return false;
+        }
+        return true;
+      });
+    }
+
+    // Reagrupa por Campaign (usado no grafico) — soma leads/compras.
+    function _agruparPorCampaign(detalhes) {
+      const m = new Map();
+      for (const d of detalhes) {
+        let g = m.get(d.utm_campaign);
+        if (!g) { g = { campaign: d.utm_campaign, leads: 0, compras: 0 }; m.set(d.utm_campaign, g); }
+        g.leads++;
+        if (d.comprou) g.compras++;
+      }
+      return [...m.values()].sort((a, b) => (b.compras - a.compras) || (b.leads - a.leads)).slice(0, 12);
+    }
+
+    function _renderCardsUtm(det) {
+      const total = det.length;
+      const compradores = det.reduce((s, d) => s + (d.comprou ? 1 : 0), 0);
+      const valor = det.reduce((s, d) => s + (d.comprou ? Number(d.total_value || 0) : 0), 0);
+      const c = (num, lbl, cls) => `<div class="utm-card ${cls || ''}"><div class="num">${num}</div><div class="lbl">${lbl}</div></div>`;
+      return `
+        <div class="utm-cards">
+          ${c(total, 'Total de leads')}
+          ${c(compradores, 'Leads que compraram')}
+          ${c('R$ ' + fmtBRL(valor), 'Valor aprovado', 'destaque')}
+        </div>`;
+    }
+
+    function _renderFiltrosUtm(detBase) {
+      const f = utmFiltrosInternos;
+      const baseCamp = _filtrarDetalhesParcial(detBase, { campaign: 'todas' });
+      const baseCont = _filtrarDetalhesParcial(detBase, { content: 'todas' });
+      const baseTerm = _filtrarDetalhesParcial(detBase, { term: 'todas' });
+      const baseMet = _filtrarDetalhesParcial(detBase, { metodo: 'todos' });
+      const gruposCamp = _metricasGrupo(baseCamp, 'utm_campaign');
+      const gruposCont = _metricasGrupo(baseCont, 'utm_content');
+      const gruposTerm = _metricasGrupo(baseTerm, 'utm_term');
+      const metM = _metricasMetodo(baseMet);
+      const opt = (v, sel, label) => `<option value="${escHtml(v)}" title="${escHtml(v)}"${v === sel ? ' selected' : ''}>${escHtml(label || v)}</option>`;
+      const sel = (id, cur, grupos) => `
+        <select id="${id}" onchange="onUtmFiltroChange('${id}', this.value)">
+          <option value="todas"${cur === 'todas' ? ' selected' : ''}>Todas</option>
+          ${grupos.map((g) => opt(g.chave, cur, _labelMetricaOpcao(g.chave, g.leads, g.compradores, g.valorAprovado))).join('')}
+        </select>`;
+      const cur = f.metodo;
+      const totCompradores = baseMet.reduce((s, d) => s + (d.comprou ? 1 : 0), 0);
+      const totValor = baseMet.reduce((s, d) => s + (d.comprou ? Number(d.total_value || 0) : 0), 0);
+      const selMet = `
+        <select id="utm-f-metodo" onchange="onUtmFiltroChange('utm-f-metodo', this.value)">
+          <option value="todos"${cur === 'todos' ? ' selected' : ''}>${_escMetricaMet('Todos', baseMet.length, totCompradores, totValor)}</option>
+          <option value="pix"${cur === 'pix' ? ' selected' : ''}>${_escMetricaMet('Pix', metM.pix.leads, metM.pix.compradores, metM.pix.valor)}</option>
+          <option value="credit_card"${cur === 'credit_card' ? ' selected' : ''}>${_escMetricaMet('Cartão de crédito', metM.card.leads, metM.card.compradores, metM.card.valor)}</option>
+        </select>`;
+      return `
+        <div class="utm-filtros">
+          <span class="lbl">Campanha:</span> ${sel('utm-f-campaign', f.campaign, gruposCamp)}
+          <span class="lbl">Criativo:</span> ${sel('utm-f-content',  f.content,  gruposCont)}
+          <span class="lbl">Fonte:</span>    ${sel('utm-f-term',     f.term,     gruposTerm)}
+          <span class="lbl">Método:</span>   ${selMet}
+        </div>`;
+    }
+
+    function _escMetricaMet(nome, leads, compradores, valor) {
+      return escHtml(_labelMetricaOpcao(nome, leads, compradores, valor));
+    }
+
+    function _renderGraficoUtm(det) {
+      const grupos = _agruparPorCampaign(det);
+      if (!grupos.length) return '';
+      const max = grupos.reduce((m, g) => Math.max(m, g.leads, g.compras), 0) || 1;
+      const linhas = grupos.map((g) => {
+        const wL = Math.max(2, Math.round((g.leads / max) * 100));
+        const wC = Math.max(0, Math.round((g.compras / max) * 100));
+        return `
+          <div class="g-row">
+            <div class="g-nome" title="${escHtml(g.campaign)}">${escHtml(g.campaign)}</div>
+            <div class="g-bars">
+              <div class="g-bar leads"   style="width:${wL}%"></div>
+              <div class="g-bar compras" style="width:${wC}%"></div>
+            </div>
+            <div class="g-val"><b>${g.leads}</b> leads · <b>${g.compras}</b> compras</div>
+          </div>`;
+      }).join('');
+      return `
+        <div class="utm-graf">
+          <h4>Leads × Compras por Campanha</h4>
+          <div class="g-leg"><span class="sq leads"></span>Leads &nbsp;·&nbsp; <span class="sq compras"></span>Compras</div>
+          ${linhas}
+        </div>`;
+    }
+
+    function _renderTabelaUtm(det) {
+      if (!det.length) {
+        return '<div class="vazio">Nenhum lead QUIZ encontrado para o período/filtro selecionado.</div>';
+      }
+      const linhas = det.slice(0, 300).map((d) => {
+        const metodoTxt = d.comprou ? labelMetodo(d.payment_method) : '—';
+        return `
+        <tr>
+          <td class="emailc" title="${escHtml(d.email)}">${escHtml(d.email)}</td>
+          <td class="campv" title="${escHtml(d.utm_campaign)}">${escHtml(d.utm_campaign)}</td>
+          <td class="cont"  title="${escHtml(d.utm_content)}">${escHtml(d.utm_content)}</td>
+          <td>${escHtml(d.utm_term)}</td>
+          <td class="pageurl" title="${escHtml(d.page_url)}">${escHtml(d.page_url)}</td>
+          <td>${d.comprou ? '<span class="badge-sim">Sim</span>' : '<span class="badge-nao">Não</span>'}</td>
+          <td class="num">${d.comprou ? 'R$ ' + fmtBRL(d.total_value) : '—'}</td>
+          <td>${escHtml(metodoTxt)}</td>
+        </tr>`;
+      }).join('');
+      return `
+        <div class="utm-scroll">
+          <table class="tbl-utm">
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Campanha</th>
+                <th>Criativo</th>
+                <th>Fonte</th>
+                <th>Page URL</th>
+                <th>Comprou?</th>
+                <th class="num">Valor</th>
+                <th>Método</th>
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+    }
+
+    // Render principal do bloco. Le sempre de ultimaMetrica.leads_utm_area e
+    // aplica utmFiltrosInternos. Redesenha cards + grafico + tabela; os selects
+    // sao redesenhados só na primeira montagem (evita perder foco ao mudar).
+    function renderLeadsUtmArea(remontarFiltros) {
+      const area = (ultimaMetrica && ultimaMetrica.leads_utm_area) || null;
+      const detBase = area && Array.isArray(area.detalhes) ? area.detalhes : [];
+      const det = _filtrarDetalhes(detBase);
+
+      const elC = document.getElementById('utm-cards');
+      const elF = document.getElementById('utm-filtros-wrap');
+      const elG = document.getElementById('utm-grafico');
+      const elT = document.getElementById('utm-tabela');
+      const elObs = document.getElementById('utm-obs');
+      if (!elC || !elF || !elG || !elT) return;
+
+      elC.innerHTML = _renderCardsUtm(det);
+      elF.innerHTML = _renderFiltrosUtm(detBase);
+      elG.innerHTML = _renderGraficoUtm(det);
+      elT.innerHTML = _renderTabelaUtm(det);
+      if (elObs) {
+        elObs.textContent = detBase.length
+          ? `Cada linha representa 1 lead (deduplicado por email). Múltiplas compras aprovadas do mesmo email são somadas em Valor.`
+          : '';
+      }
+    }
+
+    // Handler do onchange dos selects internos.
+    window.onUtmFiltroChange = function (id, valor) {
+      if (id === 'utm-f-campaign') utmFiltrosInternos.campaign = valor;
+      else if (id === 'utm-f-content') utmFiltrosInternos.content = valor;
+      else if (id === 'utm-f-term') utmFiltrosInternos.term = valor;
+      else if (id === 'utm-f-metodo') utmFiltrosInternos.metodo = valor;
+      // Nao remonta tabela/cards — remonta selects para metricas em cascata
+      renderLeadsUtmArea(true);
+    };
+
+    // Reseta filtros internos ao trocar periodo/entrada global (nova carga).
+    function resetarFiltrosUtmInternos() {
+      utmFiltrosInternos.campaign = 'todas';
+      utmFiltrosInternos.content = 'todas';
+      utmFiltrosInternos.term = 'todas';
+      utmFiltrosInternos.metodo = 'todos';
+    }
+
     function render(m) {
       ultimaMetrica = m;
       const t = m.totais;
@@ -365,7 +718,7 @@
       const capHtml = cap.fontes.length
         ? cap.fontes.map((f) => barra(
             f.origem, f.pct,
-            `<b>${f.visitas}</b> · ${f.pct}% · ${f.leads} leads (${f.conv_lead}%) · ${f.compras} compras`
+            `<b>${f.visitas}</b> · ${f.pct}% · ${f.leads} leads (${f.conv_lead}%) · ${f.compras} compras aprovadas`
           )).join('')
         : '<div class="vazio">Sem visitas registradas ainda.</div>';
 
@@ -457,7 +810,7 @@
         </section>
         <section>
           <h2>🔗 Origem dos leads (por link)</h2>
-          <p class="desc">De onde cada sessão veio (primeiro toque): número, % do total e quanto virou lead/compra.</p>
+          <p class="desc">De onde cada sessão veio (primeiro toque): número, % do total e quanto virou lead ou compra aprovada.</p>
           ${capAviso}
           ${capHtml}
         </section>
@@ -493,9 +846,20 @@
             <p class="desc">A última etapa que cada sessão que NÃO converteu alcançou.</p>
             ${abandonoHtml}
           </section>
-        </div>`;
+        </div>
+        <section>
+          <h2>🔗 Leads e compras por UTM</h2>
+          <p class="desc">Leads do funil QUIZ, compradores aprovados no Guru e UTMs de origem.</p>
+          <div id="utm-cards"></div>
+          <div id="utm-filtros-wrap"></div>
+          <div id="utm-tabela"></div>
+          <div id="utm-grafico"></div>
+          <div id="utm-obs" class="utm-obs"></div>
+        </section>`;
 
       renderLeads();
+      resetarFiltrosUtmInternos();
+      renderLeadsUtmArea(true);
       sincronizarPeriodoInputs();
       const selEntrada = document.getElementById('entrada-select');
       if (selEntrada) selEntrada.value = entradaAtual;

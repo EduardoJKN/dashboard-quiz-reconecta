@@ -12,6 +12,7 @@ const path = require('path');
 const { carregarPagamento } = require('./pagamentoGuru');
 const { carregarLeads } = require('./leadsQuiz');
 const { carregarFunilQuiz } = require('./funilQuiz');
+const { carregarLeadsUtm } = require('./leadsUtm');
 
 const DIR = path.join(__dirname, '..', 'data');
 const ARQ = path.join(DIR, 'eventos.jsonl');
@@ -402,10 +403,10 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
             origem: o.origem === semOrigemChave ? 'Sem origem (direto)' : o.origem,
             visitas: o.sessoes,
             leads: o.leads,
-            compras: o.compras,
+            compras: o.compras_aprovadas || 0,
             pct: pct(o.sessoes, totSessoesCap),
             conv_lead: pct(o.leads, o.sessoes),
-            conv_compra: pct(o.compras, o.sessoes),
+            conv_compra: pct(o.compras_aprovadas || 0, o.sessoes),
           }))
           .sort((a, b) => b.visitas - a.visitas),
       };
@@ -478,6 +479,19 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
     geral: pct(totais.pdfs, totais.visitas),
   };
 
+  // --- Leads e compras por UTM (agregado + detalhado, so com DATABASE_URL) ---
+  // leads_utm_area = { resumo, por_utm, detalhes }. Mantemos leads_utm =
+  // por_utm apenas como fallback de compatibilidade com consumidores antigos.
+  let leads_utm_area = { resumo: { total_leads: 0, total_compradores: 0, valor_total_aprovado: 0 }, por_utm: [], detalhes: [] };
+  if (process.env.DATABASE_URL) {
+    try {
+      leads_utm_area = await carregarLeadsUtm({ inicio, fim, entrada });
+    } catch (e) {
+      console.error('[analytics] falha ao ler leads_utm_area do Postgres:', e.message);
+    }
+  }
+  const leads_utm = leads_utm_area.por_utm;
+
   return {
     gerado_em: Date.now(),
     periodo: { inicio, fim },
@@ -493,6 +507,8 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
     perfis: perfisFinal || perfis,
     ab_entradas: abEntradas,
     ab_metricas: abMetricas,
+    leads_utm,
+    leads_utm_area,
   };
 }
 
