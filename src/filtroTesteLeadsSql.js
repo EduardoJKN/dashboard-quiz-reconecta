@@ -74,4 +74,82 @@ function sqlJoinEntradaLead(lr = 'lr') {
     ) ent ON true`;
 }
 
-module.exports = { sqlFiltroTesteLeads, sqlPeriodoLeads, sqlJoinEntradaLead };
+// Leads oficiais do QUIZ no periodo (dedup por email). Usado pelo funil para
+// incluir sessoes associadas por session_id mesmo sem email em quiz_sessoes.
+function sqlCteLeadsValidos() {
+  return `
+  leads_validos AS (
+    SELECT DISTINCT ON (LOWER(TRIM(l.email)))
+      LOWER(TRIM(l.email)) AS email_norm,
+      l.session_id
+    FROM lp_form.leads l
+    WHERE UPPER(TRIM(COALESCE(l.funil_origem, ''))) = 'QUIZ'
+      AND NULLIF(TRIM(l.email), '') IS NOT NULL
+      ${sqlFiltroTesteLeads('l.')}
+      ${sqlPeriodoLeads('l.')}
+    ORDER BY LOWER(TRIM(l.email)),
+      COALESCE(l.created_at::timestamp, l."timestamp"::timestamp) DESC NULLS LAST
+  )`;
+}
+
+// Sessoes do funil enriquecidas com lead associado e entrada_resolvida.
+// Parte de leads_validos (poucas linhas) e faz join reverso em quiz_sessoes,
+// evitando scan + LATERAL em toda a tabela de sessoes.
+function sqlCteSessoesEnriquecidas() {
+  return `
+  lead_session_ids AS (
+    SELECT DISTINCT NULLIF(TRIM(session_id), '') AS session_id
+    FROM leads_validos
+    WHERE NULLIF(TRIM(session_id), '') IS NOT NULL
+  ),
+  entradas_eventos AS (
+    SELECT DISTINCT ON (e.session_id)
+      e.session_id,
+      LOWER(TRIM(e.ab_entrada)) AS entrada
+    FROM funil_quiz.quiz_eventos e
+    INNER JOIN lead_session_ids ls ON ls.session_id = e.session_id
+    WHERE LOWER(TRIM(e.ab_entrada)) IN ('a', 'b', 'c')
+    ORDER BY e.session_id, e.criado_em ASC
+  ),
+  sessoes_enriquecidas AS (
+    SELECT DISTINCT ON (qs.session_id)
+      qs.*,
+      lv.email_norm AS lead_email_norm,
+      COALESCE(
+        NULLIF(LOWER(TRIM(qs.ab_entrada)), ''),
+        ee.entrada
+      ) AS entrada_resolvida
+    FROM leads_validos lv
+    INNER JOIN funil_quiz.quiz_sessoes qs ON (
+      (NULLIF(TRIM(lv.session_id), '') IS NOT NULL AND qs.session_id = lv.session_id)
+      OR (
+        NULLIF(TRIM(qs.email), '') IS NOT NULL
+        AND LOWER(TRIM(qs.email)) = lv.email_norm
+      )
+    )
+    LEFT JOIN entradas_eventos ee ON ee.session_id = qs.session_id
+    WHERE COALESCE(qs.primeiro_evento, qs.ultimo_evento) >= $1::date
+      AND COALESCE(qs.primeiro_evento, qs.ultimo_evento) < ($2::date + interval '1 day')
+      AND (
+        NULLIF(TRIM(qs.email), '') IS NULL
+        OR (
+          COALESCE(qs.email, '') NOT ILIKE '%teste%'
+          AND COALESCE(qs.email, '') NOT ILIKE '%reconecta%'
+        )
+      )
+    ORDER BY
+      qs.session_id,
+      CASE
+        WHEN NULLIF(TRIM(lv.session_id), '') IS NOT NULL AND qs.session_id = lv.session_id THEN 0
+        ELSE 1
+      END
+  )`;
+}
+
+module.exports = {
+  sqlFiltroTesteLeads,
+  sqlPeriodoLeads,
+  sqlJoinEntradaLead,
+  sqlCteLeadsValidos,
+  sqlCteSessoesEnriquecidas,
+};

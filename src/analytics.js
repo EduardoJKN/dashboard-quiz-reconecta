@@ -10,7 +10,6 @@
 const fs = require('fs');
 const path = require('path');
 const { carregarPagamento } = require('./pagamentoGuru');
-const { carregarLeads } = require('./leadsQuiz');
 const { carregarLeadsOrigem } = require('./leadsOrigem');
 const { carregarFunilQuiz } = require('./funilQuiz');
 const { carregarLeadsUtm } = require('./leadsUtm');
@@ -207,18 +206,7 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
     pdfs: get('pdf'),
   };
 
-  // Se tiver Postgres, o card "Leads (formulario)" vem de lp_form.leads
-  // (funil_origem = 'QUIZ'). Se falhar, mantem o valor do funil local.
-  if (process.env.DATABASE_URL) {
-    try {
-      totais.leads = await carregarLeads({ inicio, fim, entrada });
-    } catch (e) {
-      console.error('[analytics] falha ao ler leads do Postgres, usando fallback local:', e.message);
-    }
-  }
-
-  // --- Pagamento (eventos 'pago'/'reembolso' vindos do webhook do Guru) -------
-  // Dedup por id de transacao: o Guru pode reenviar o mesmo evento varias vezes.
+  // --- Pagamento local (fallback) + Postgres em paralelo mais abaixo ---------
   const vistoPago = new Set();
   const vistoReemb = new Set();
   let pix = 0, cartao = 0, boleto = 0, outroPago = 0;
@@ -258,24 +246,12 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
     ticket: pagosTotalLocal ? Math.round((fatBruto / pagosTotalLocal) * 100) / 100 : 0,
   };
 
-  // Se tiver Postgres configurado, o objeto 'pagamento' vem da tabela
-  // financeiro.guru_log_quiz (fonte de verdade). Se falhar, cai no local.
   let pagamento = pagamentoLocal;
-  if (process.env.DATABASE_URL) {
-    try {
-      pagamento = await carregarPagamento({ inicio, fim, entrada });
-    } catch (e) {
-      console.error('[analytics] falha ao ler pagamento do Postgres, usando fallback local:', e.message);
-      pagamento = pagamentoLocal;
-    }
-  }
-  const pagosTotal = pagamento.pagos_total;
-
-  // Regra de negocio: o PDF so e gerado quando ha pagamento confirmado.
-  // Entao totais.pdfs = pagamento.pagos_total (mesma coisa vale na etapa 'pdf'
-  // do array funil, montada abaixo). Se nao houver pagamento, fica 0.
-  const pdfsGerados = pagamento && pagamento.pagos_total ? pagamento.pagos_total : 0;
-  totais.pdfs = pdfsGerados;
+  let leads_utm_area = {
+    resumo: { total_leads: 0, total_compradores: 0, valor_total_aprovado: 0 },
+    por_utm: [],
+    detalhes: [],
+  };
 
   // --- Captacao por link/origem (primeiro toque) -----------------------------
   // Origem vem do evento 'visita' (dados.origem / utm_source / utm_campaign / link).
@@ -340,9 +316,35 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
     taxa_inicio: 0, taxa_termino: 0, taxa_conversao: 0,
   });
   let abMetricas = { a: zeroMet(), b: zeroMet(), c: zeroMet() };
+
   if (process.env.DATABASE_URL) {
-    try {
-      const fq = await carregarFunilQuiz({ inicio, fim, entrada });
+    const pgParams = { inicio, fim, entrada };
+    const [payR, utmR, fqR, origR] = await Promise.allSettled([
+      carregarPagamento(pgParams),
+      carregarLeadsUtm(pgParams),
+      carregarFunilQuiz(pgParams),
+      carregarLeadsOrigem(pgParams),
+    ]);
+
+    if (payR.status === 'fulfilled') {
+      pagamento = payR.value;
+    } else {
+      console.error('[analytics] falha ao ler pagamento do Postgres, usando fallback local:', payR.reason && payR.reason.message);
+      pagamento = pagamentoLocal;
+    }
+
+    if (utmR.status === 'fulfilled') {
+      leads_utm_area = utmR.value;
+      totais.leads = utmR.value.resumo.total_leads || 0;
+    } else {
+      console.error('[analytics] falha ao ler leads_utm_area do Postgres:', utmR.reason && utmR.reason.message);
+    }
+
+    const pdfsGerados = pagamento && pagamento.pagos_total ? pagamento.pagos_total : 0;
+    totais.pdfs = pdfsGerados;
+
+    if (fqR.status === 'fulfilled') {
+      const fq = fqR.value;
       totalSessoesFinal = fq.total_sessoes;
       totais.visitas_pagina = fq.visitas_pagina || 0;
       totais.visitas = fq.totais.visitas;
@@ -350,13 +352,8 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
       totais.resultados = fq.totais.resultados;
       totais.compras = fq.totais.compras;
 
-      // funil: monta o array na mesma forma do local
-      // ({ key, label, sessoes, pct_topo, pct_etapa, abandonaram }). O "lead"
-      // aqui usa virou_lead da tabela de sessoes (visualizacao de funil), NAO
-      // substitui o card oficial de leads (esse vem de lp_form.leads).
       const alcancePergunta = {};
       for (const r of fq.perguntas_alcance) alcancePergunta[r.pergunta] = r.sessoes;
-      // Alcance A/B/C por pergunta (indexado por numero da pergunta)
       const abPergunta = {};
       for (const r of (fq.perguntas_ab || [])) abPergunta[r.pergunta] = { a: r.a || 0, b: r.b || 0, c: r.c || 0 };
       const funilCru = [
@@ -379,8 +376,6 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
       funilCru.push({ key: 'esperando_pagamento', label: 'Esperando pagamento', sessoes: (pagamento && pagamento.esperando_pagamento) || 0 });
       funilCru.push({ key: 'pdf',       label: 'PDF gerado',           sessoes: pdfsGerados });
 
-      // Base do funil: visitas na pagina quando > 0; caso contrario, fallback
-      // pra 'Abriu o quiz' (evita divisao por 0 e inflacao dos %s).
       const baseTopo = funilCru[0].sessoes || funilCru[1].sessoes || 1;
       funilFinal = funilCru.map((f, i) => {
         const pct_topo = Math.round((f.sessoes / baseTopo) * 1000) / 10;
@@ -394,30 +389,6 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
         };
       });
 
-      // captacao: origem dos leads via lp_form.leads.utm_source (nao quiz_sessoes).
-      try {
-        const origensLeads = await carregarLeadsOrigem({ inicio, fim, entrada });
-        const totLeadsOrigem = origensLeads.reduce((s, o) => s + (o.leads || 0), 0);
-        const semOrigemChave = 'Sem origem';
-        captacaoFinal = {
-          tem_origem: origensLeads.some((o) => o.origem && o.origem !== semOrigemChave),
-          fontes: origensLeads
-            .map((o) => ({
-              origem: o.origem === semOrigemChave ? 'Sem origem (direto)' : o.origem,
-              visitas: o.leads,
-              leads: o.leads,
-              compras: o.compras_aprovadas || 0,
-              pct: pct(o.leads, totLeadsOrigem),
-              conv_lead: pct(o.leads, totLeadsOrigem),
-              conv_compra: pct(o.compras_aprovadas || 0, o.leads),
-            }))
-            .sort((a, b) => b.leads - a.leads),
-        };
-      } catch (e) {
-        console.error('[analytics] falha ao ler origem dos leads (lp_form.leads):', e.message);
-      }
-
-      // abandono: por pergunta + no formulario. Labels a partir de LABEL_PERGUNTA.
       const rotuloPergunta = (n) => {
         if (n == null || n === 0) return 'Abriu o quiz';
         if (n >= 1 && n <= 15) return LABEL_PERGUNTA[n] || `P${n}`;
@@ -442,7 +413,6 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
       }
       abandonoFinal.sort((a, b) => b.count - a.count);
 
-      // A/B/C: agregados por entrada (so sessoes com email valido)
       if (fq.ab_entradas) {
         abEntradas = {
           a: fq.ab_entradas.a || 0,
@@ -458,9 +428,6 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
         };
       }
 
-      // perfis: distribuicao vinda da coluna 'perfil' em funil_quiz.quiz_sessoes
-      // entre quem chegou ao diagnostico. Se a query nao trouxer nada, mantem
-      // o fallback local (jsonl).
       if (fq.perfis && fq.perfis.length) {
         const totalComPerfil = fq.perfis.reduce((s, p) => s + p.count, 0) || 1;
         perfisFinal = fq.perfis
@@ -472,10 +439,37 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
           }))
           .sort((a, b) => b.count - a.count);
       }
-    } catch (e) {
-      console.error('[analytics] falha ao ler funil do Postgres, usando fallback local:', e.message);
+    } else {
+      console.error('[analytics] falha ao ler funil do Postgres, usando fallback local:', fqR.reason && fqR.reason.message);
+      totais.pdfs = pagamento && pagamento.pagos_total ? pagamento.pagos_total : 0;
     }
+
+    if (origR.status === 'fulfilled') {
+      const origensLeads = origR.value;
+      const totLeadsOrigem = origensLeads.reduce((s, o) => s + (o.leads || 0), 0);
+      const semOrigemChave = 'Sem origem';
+      captacaoFinal = {
+        tem_origem: origensLeads.some((o) => o.origem && o.origem !== semOrigemChave),
+        fontes: origensLeads
+          .map((o) => ({
+            origem: o.origem === semOrigemChave ? 'Sem origem (direto)' : o.origem,
+            visitas: o.leads,
+            leads: o.leads,
+            compras: o.compras_aprovadas || 0,
+            pct: pct(o.leads, totLeadsOrigem),
+            conv_lead: pct(o.leads, totLeadsOrigem),
+            conv_compra: pct(o.compras_aprovadas || 0, o.leads),
+          }))
+          .sort((a, b) => b.leads - a.leads),
+      };
+    } else {
+      console.error('[analytics] falha ao ler origem dos leads (lp_form.leads):', origR.reason && origR.reason.message);
+    }
+  } else {
+    totais.pdfs = pagamento && pagamento.pagos_total ? pagamento.pagos_total : 0;
   }
+
+  const pagosTotal = pagamento.pagos_total;
 
   const conversao = {
     visita_resultado: pct(totais.resultados, totais.visitas),
@@ -485,17 +479,6 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
     geral: pct(totais.pdfs, totais.visitas),
   };
 
-  // --- Leads e compras por UTM (agregado + detalhado, so com DATABASE_URL) ---
-  // leads_utm_area = { resumo, por_utm, detalhes }. Mantemos leads_utm =
-  // por_utm apenas como fallback de compatibilidade com consumidores antigos.
-  let leads_utm_area = { resumo: { total_leads: 0, total_compradores: 0, valor_total_aprovado: 0 }, por_utm: [], detalhes: [] };
-  if (process.env.DATABASE_URL) {
-    try {
-      leads_utm_area = await carregarLeadsUtm({ inicio, fim, entrada });
-    } catch (e) {
-      console.error('[analytics] falha ao ler leads_utm_area do Postgres:', e.message);
-    }
-  }
   const leads_utm = leads_utm_area.por_utm;
 
   return {

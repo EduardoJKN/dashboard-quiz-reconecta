@@ -30,7 +30,7 @@ if (url) {
   pool = new Pool({
     ...cfg,
     ssl: useSsl ? { rejectUnauthorized: false } : false,
-    max: 5,
+    max: 8,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
   });
