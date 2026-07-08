@@ -9,7 +9,15 @@
 //
 // p = prefixo de coluna ('' ou 'l.').
 // ============================================================================
+// p = prefixo de coluna ('' ou 'l.').
+function sqlNormIdent(p, col) {
+  return `LOWER(REGEXP_REPLACE(COALESCE(${p}${col}, ''), '[^a-z0-9]', '', 'g'))`;
+}
+
 function sqlFiltroTesteLeads(p = '') {
+  const nEmail = sqlNormIdent(p, 'email');
+  const nNome = sqlNormIdent(p, 'first_name');
+  const nInsta = sqlNormIdent(p, 'instagram');
   return `
       AND COALESCE(${p}email, '')      NOT ILIKE '%test%'
       AND COALESCE(${p}email, '')      NOT ILIKE '%teste%'
@@ -21,6 +29,12 @@ function sqlFiltroTesteLeads(p = '') {
       AND COALESCE(${p}instagram, '')  NOT ILIKE '%test%'
       AND COALESCE(${p}instagram, '')  NOT ILIKE '%teste%'
       AND COALESCE(${p}instagram, '')  NOT ILIKE '%jardelkahne%'
+      AND ${nEmail} NOT LIKE '%jardelkahne%'
+      AND ${nEmail} NOT LIKE '%jardelahne%'
+      AND ${nNome} NOT LIKE '%jardelkahne%'
+      AND ${nNome} NOT LIKE '%jardelahne%'
+      AND ${nInsta} NOT LIKE '%jardelkahne%'
+      AND ${nInsta} NOT LIKE '%jardelahne%'
       AND LOWER(TRIM(COALESCE(${p}utm_source, '')))   NOT IN ('test','teste','test_campaign','ad_test_01','test_term')
       AND LOWER(TRIM(COALESCE(${p}utm_medium, '')))   NOT IN ('test','teste','test_campaign','ad_test_01','test_term')
       AND LOWER(TRIM(COALESCE(${p}utm_campaign, ''))) NOT IN ('test','teste','test_campaign','ad_test_01','test_term')
@@ -81,7 +95,8 @@ function sqlCteLeadsValidos() {
   leads_validos AS (
     SELECT DISTINCT ON (LOWER(TRIM(l.email)))
       LOWER(TRIM(l.email)) AS email_norm,
-      l.session_id
+      l.session_id,
+      COALESCE(l.created_at::timestamp, l."timestamp"::timestamp) AS lead_ts
     FROM lp_form.leads l
     WHERE UPPER(TRIM(COALESCE(l.funil_origem, ''))) = 'QUIZ'
       AND NULLIF(TRIM(l.email), '') IS NOT NULL
@@ -115,10 +130,12 @@ function sqlCteSessoesEnriquecidas() {
     SELECT DISTINCT ON (qs.session_id)
       qs.*,
       lv.email_norm AS lead_email_norm,
+      lv.lead_ts,
       COALESCE(
         NULLIF(LOWER(TRIM(qs.ab_entrada)), ''),
         ee.entrada
-      ) AS entrada_resolvida
+      ) AS entrada_resolvida,
+      lv.lead_ts::date AS data_ref
     FROM leads_validos lv
     INNER JOIN funil_quiz.quiz_sessoes qs ON (
       (NULLIF(TRIM(lv.session_id), '') IS NOT NULL AND qs.session_id = lv.session_id)
@@ -128,8 +145,8 @@ function sqlCteSessoesEnriquecidas() {
       )
     )
     LEFT JOIN entradas_eventos ee ON ee.session_id = qs.session_id
-    WHERE COALESCE(qs.primeiro_evento, qs.ultimo_evento) >= $1::date
-      AND COALESCE(qs.primeiro_evento, qs.ultimo_evento) < ($2::date + interval '1 day')
+    WHERE lv.lead_ts::date >= $1::date
+      AND lv.lead_ts::date <= $2::date
       AND (
         NULLIF(TRIM(qs.email), '') IS NULL
         OR (
