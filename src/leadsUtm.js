@@ -14,7 +14,12 @@
 // nem raw_payload — nem para o front, nem para logs.
 // ============================================================================
 const { query } = require('./db');
-const { sqlFiltroTesteLeads, sqlPeriodoLeads, sqlJoinEntradaLead } = require('./filtroTesteLeadsSql');
+const {
+  sqlFiltroTesteLeads,
+  sqlPeriodoLeads,
+  sqlJoinEntradaLead,
+  sqlFiltroTesteGuru,
+} = require('./filtroTesteLeadsSql');
 
 // Parametros: $1 = inicio, $2 = fim, $3 = entrada global ('a'|'b'|'c'|NULL=todas).
 const SQL = `
@@ -103,7 +108,8 @@ const SQL = `
   ),
   leads_base AS (
     SELECT * FROM leads_with_entrada
-    WHERE $3::text IS NULL OR entrada = $3::text
+    WHERE entrada IN ('a', 'b', 'c')
+      AND ($3::text IS NULL OR entrada = $3::text)
   ),
   compras_agg AS (
     SELECT
@@ -113,9 +119,7 @@ const SQL = `
       MAX(COALESCE(g.guru_confirmed_at, g.guru_created_at, g.received_at)) AS data_compra
     FROM financeiro.guru_log_quiz g
     WHERE LOWER(TRIM(g.status)) = 'approved'
-      AND COALESCE(g.customer_email, '') NOT ILIKE '%teste%'
-      AND COALESCE(g.customer_email, '') NOT ILIKE '%reconecta%'
-      AND NULLIF(TRIM(g.customer_email), '') IS NOT NULL
+      ${sqlFiltroTesteGuru('g.', { comNome: true })}
       AND COALESCE(g.guru_confirmed_at, g.guru_created_at, g.received_at) >= $1::date
       AND COALESCE(g.guru_confirmed_at, g.guru_created_at, g.received_at) <  ($2::date + interval '1 day')
     GROUP BY LOWER(TRIM(g.customer_email))

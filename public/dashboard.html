@@ -812,22 +812,21 @@
       const pctB = (n) => (base ? Math.round((n / base) * 1000) / 10 : 0);
 
       // ---- Cards de números-chave (número + %) ----
-      // Base do topo: 'Visitas na página' quando > 0, senão 'Abriu o quiz'.
-      const bV = t.visitas_pagina || t.visitas || 1;
+      // Base do topo: 'Visitas na página' quando > 0, senão 'Começaram'.
+      const bV = t.visitas_pagina || t.iniciaram || 1;
       const pctV = (n) => Math.round((n / bV) * 1000) / 10;
       const esperando = pg.esperando_pagamento || 0;
       const pctEsperando = t.compras ? Math.round((esperando / t.compras) * 1000) / 10 : 0;
       const cards = `
         <div class="cards">
           ${card(t.visitas_pagina || 0, 'Visitas na página', 100)}
-          ${card(t.visitas, 'Abriram o quiz', pctV(t.visitas))}
           ${card(t.iniciaram, 'Começaram', pctV(t.iniciaram))}
           ${card(t.leads, 'Leads (formulário)', pctV(t.leads))}
           ${card(t.resultados, 'Viram o diagnóstico', pctV(t.resultados))}
           ${card(t.compras, 'Clicaram comprar', pctV(t.compras))}
           ${card(esperando, 'Esperando pagamento', pctEsperando)}
           ${card(pg.pagos_total || 0, 'Pagos (Pix + cartão)', pctV(pg.pagos_total || 0), 'ouro')}
-          ${card(c.geral + '%', 'Conversão geral<br>(abriu → PDF)', null, 'destaque')}
+          ${card(c.geral + '%', 'Conversão geral<br>(começou → pago)', null, 'destaque')}
         </div>`;
 
       // ---- Cards A/B/C (teste de entrada) — so quem tem email valido ----
@@ -862,7 +861,7 @@
         </div>`;
 
       // ---- Desenho do funil (sessões) + pagamento ----
-      const ordem = ['visitas_pagina', 'visita', 'iniciou', 'captura', 'lead', 'resultado', 'compra', 'esperando_pagamento', 'pdf'];
+      const ordem = ['visitas_pagina', 'iniciou', 'captura', 'lead', 'resultado', 'compra', 'esperando_pagamento', 'pdf'];
       let desenho = ordem.map((k) => {
         const s = stage(m, k);
         return fdRow(s.label, s.sessoes, s.pct_topo, s.abandonaram, false);
@@ -932,7 +931,7 @@
       // ---- Conversão ----
       const conv = `
         <div class="cards" style="margin-bottom:0">
-          <div class="card"><div class="num">${c.visita_resultado}%</div><div class="lbl">Abriu → Diagnóstico</div></div>
+          <div class="card"><div class="num">${c.visita_resultado}%</div><div class="lbl">Começou → Diagnóstico</div></div>
           <div class="card"><div class="num">${c.resultado_compra}%</div><div class="lbl">Diagnóstico → Comprar</div></div>
           <div class="card"><div class="num">${c.compra_pago}%</div><div class="lbl">Comprar → Pago</div></div>
           <div class="card"><div class="num">${c.compra_pdf}%</div><div class="lbl">Comprar → PDF</div></div>

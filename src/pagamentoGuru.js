@@ -11,6 +11,10 @@
 //   - metodo: pix / cartao / boleto / outro (inclui 'free')
 // ============================================================================
 const { query } = require('./db');
+const {
+  sqlFiltroTesteGuru,
+  sqlFiltroEmailOpcional,
+} = require('./filtroTesteLeadsSql');
 
 const STATUS_PAGOS = new Set([
   'approved',
@@ -25,8 +29,7 @@ const REGEX_REEMBOLSO = /(refund|refunded|reembolso|reimbursed|chargeback|estorn
 
 // Regra global de exclusao de testes/internos + filtro de periodo por
 // COALESCE(guru_confirmed_at, guru_created_at, received_at). Parametros:
-// $1 = inicio, $2 = fim, $3 = entrada opcional ('a'|'b'|'c'|NULL). Quando
-// entrada setada, casa customer_email com funil_quiz.quiz_sessoes.email.
+// $1 = inicio, $2 = fim, $3 = entrada opcional ('a'|'b'|'c'|NULL).
 const SQL = `
   SELECT
     id,
@@ -40,20 +43,27 @@ const SQL = `
     guru_confirmed_at,
     received_at
   FROM financeiro.guru_log_quiz
-  WHERE COALESCE(customer_email, '') NOT ILIKE '%teste%'
-    AND COALESCE(customer_email, '') NOT ILIKE '%reconecta%'
-    AND COALESCE(guru_confirmed_at, guru_created_at, received_at) >= $1::date
+  WHERE COALESCE(guru_confirmed_at, guru_created_at, received_at) >= $1::date
     AND COALESCE(guru_confirmed_at, guru_created_at, received_at) <  ($2::date + interval '1 day')
+    ${sqlFiltroTesteGuru('', { comNome: true })}
     AND (
-      $3::text IS NULL
-      OR EXISTS (
+      EXISTS (
         SELECT 1
         FROM funil_quiz.quiz_sessoes qs
-        WHERE LOWER(TRIM(qs.ab_entrada)) = $3::text
+        WHERE LOWER(TRIM(qs.ab_entrada)) IN ('a', 'b', 'c')
+          AND ($3::text IS NULL OR LOWER(TRIM(qs.ab_entrada)) = $3::text)
           AND NULLIF(TRIM(qs.email), '') IS NOT NULL
-          AND COALESCE(qs.email, '') NOT ILIKE '%teste%'
-          AND COALESCE(qs.email, '') NOT ILIKE '%reconecta%'
+          ${sqlFiltroEmailOpcional('qs.', 'email')}
           AND LOWER(TRIM(qs.email)) = LOWER(TRIM(financeiro.guru_log_quiz.customer_email))
+      )
+      OR (
+        $3::text IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM funil_quiz.quiz_sessoes qs
+          WHERE NULLIF(TRIM(qs.email), '') IS NOT NULL
+            AND LOWER(TRIM(qs.email)) = LOWER(TRIM(financeiro.guru_log_quiz.customer_email))
+        )
       )
     )
   ORDER BY COALESCE(guru_confirmed_at, guru_created_at, received_at) ASC

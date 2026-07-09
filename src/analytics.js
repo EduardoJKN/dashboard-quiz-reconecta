@@ -74,7 +74,6 @@ function bucketFaturamento(v) {
 function etapasFunil() {
   const et = [
     { key: 'visitas_pagina', label: 'Visitas na página' },
-    { key: 'visita', label: 'Abriu o quiz' },
     { key: 'iniciou', label: 'Começou a responder' },
   ];
   for (let n = 1; n <= 15; n++) et.push({ key: 'p' + n, label: LABEL_PERGUNTA[n] });
@@ -358,7 +357,6 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
       for (const r of (fq.perguntas_ab || [])) abPergunta[r.pergunta] = { a: r.a || 0, b: r.b || 0, c: r.c || 0 };
       const funilCru = [
         { key: 'visitas_pagina', label: 'Visitas na página',   sessoes: fq.visitas_pagina || 0 },
-        { key: 'visita',    label: 'Abriu o quiz',         sessoes: fq.totais.visitas },
         { key: 'iniciou',   label: 'Começou a responder',  sessoes: fq.totais.iniciaram },
       ];
       for (let n = 1; n <= 15; n++) {
@@ -472,11 +470,12 @@ async function metricas({ inicio, fim, entrada = null } = {}) {
   const pagosTotal = pagamento.pagos_total;
 
   const conversao = {
-    visita_resultado: pct(totais.resultados, totais.visitas),
+    visita_resultado: pct(totais.resultados, totais.iniciaram),
     resultado_compra: pct(totais.compras, totais.resultados),
     compra_pago: pct(pagosTotal, totais.compras),
     compra_pdf: pct(totais.pdfs, totais.compras),
-    geral: pct(totais.pdfs, totais.visitas),
+    // Conversao geral: pagos / comecaram (base do funil apos remocao de Abriram).
+    geral: pct(pagosTotal, totais.iniciaram),
   };
 
   const leads_utm = leads_utm_area.por_utm;
