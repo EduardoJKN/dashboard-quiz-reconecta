@@ -1,15 +1,14 @@
 // ============================================================================
 // filtroTesteLeadsSql.js — clausulas SQL compartilhadas para excluir leads de
-// teste/interno em lp_form.leads. Usado por leadsQuiz.js e leadsUtm.js.
+// teste/interno em lp_form.leads. Usado por leadsQuiz.js, leadsUtm.js e
+// funilQuiz.js (jornada por sessao).
 //
 // Regra (combinada com o time):
 //   (a) email / first_name / instagram — filtro amplo por substring
 //   (b) UTMs / page_url — filtro cirurgico (nao remove campanhas reais com
 //       "Teste" no nome, ex.: "Diagnóstico | Teste | CBO | Purchase...")
-//
-// p = prefixo de coluna ('' ou 'l.').
 // ============================================================================
-// p = prefixo de coluna ('' ou 'l.').
+
 function sqlNormIdent(p, col) {
   return `LOWER(REGEXP_REPLACE(COALESCE(${p}${col}, ''), '[^a-z0-9]', '', 'g'))`;
 }
@@ -52,19 +51,13 @@ function sqlFiltroTesteLeads(p = '') {
 }
 
 // Periodo inclusivo por DATE (evita perder leads do ultimo dia por timezone).
-// p = prefixo de coluna ('' ou 'l.').
 function sqlPeriodoLeads(p = '') {
   return `
       AND COALESCE(${p}created_at::date, ${p}"timestamp"::date) >= $1::date
       AND COALESCE(${p}created_at::date, ${p}"timestamp"::date) <= $2::date`;
 }
 
-// Associa ab_entrada do lead via quiz_sessoes. Preferencia:
-//   1) sessoes com ab_entrada valida (a/b/c) apenas
-//   2) entre essas, match por session_id antes de email
-//   3) evento mais antigo
-// Match por session_id nao exige email na sessao; match por email sim.
-// lr = alias da CTE de leads (ex.: 'lr').
+// Associa ab_entrada do lead via quiz_sessoes (bloco UTM/origem).
 function sqlJoinEntradaLead(lr = 'lr') {
   return `
     LEFT JOIN LATERAL (
@@ -88,8 +81,7 @@ function sqlJoinEntradaLead(lr = 'lr') {
     ) ent ON true`;
 }
 
-// Leads oficiais do QUIZ no periodo (dedup por email). Usado pelo funil para
-// incluir sessoes associadas por session_id mesmo sem email em quiz_sessoes.
+// Leads oficiais do QUIZ no periodo (dedup por email) — UTM/origem/card leads.
 function sqlCteLeadsValidos() {
   return `
   leads_validos AS (
@@ -107,60 +99,150 @@ function sqlCteLeadsValidos() {
   )`;
 }
 
-// Sessoes do funil enriquecidas com lead associado e entrada_resolvida.
-// Parte de leads_validos (poucas linhas) e faz join reverso em quiz_sessoes,
-// evitando scan + LATERAL em toda a tabela de sessoes.
-function sqlCteSessoesEnriquecidas() {
+// Jornada por session_id a partir de quiz_eventos (fonte das etapas P1→P15).
+// data_ref: data do lead se houver lead associado; senao ultimo_evento.
+// Parametros: $1=inicio, $2=fim.
+function sqlCteJornadaSessao() {
   return `
+  leads_jornada AS (
+    SELECT DISTINCT ON (LOWER(TRIM(l.email)))
+      LOWER(TRIM(l.email)) AS email_norm,
+      NULLIF(TRIM(l.session_id), '') AS session_id,
+      COALESCE(l.created_at::timestamp, l."timestamp"::timestamp) AS lead_ts
+    FROM lp_form.leads l
+    WHERE UPPER(TRIM(COALESCE(l.funil_origem, ''))) = 'QUIZ'
+      AND NULLIF(TRIM(l.email), '') IS NOT NULL
+      ${sqlFiltroTesteLeads('l.')}
+      AND COALESCE(l.created_at::date, l."timestamp"::date) >= $1::date
+      AND COALESCE(l.created_at::date, l."timestamp"::date) <= $2::date
+    ORDER BY LOWER(TRIM(l.email)),
+      COALESCE(l.created_at::timestamp, l."timestamp"::timestamp) DESC NULLS LAST
+  ),
   lead_session_ids AS (
-    SELECT DISTINCT NULLIF(TRIM(session_id), '') AS session_id
-    FROM leads_validos
-    WHERE NULLIF(TRIM(session_id), '') IS NOT NULL
+    SELECT DISTINCT session_id
+    FROM leads_jornada
+    WHERE session_id IS NOT NULL
   ),
-  entradas_eventos AS (
-    SELECT DISTINCT ON (e.session_id)
+  jornada_eventos AS (
+    SELECT
       e.session_id,
-      LOWER(TRIM(e.ab_entrada)) AS entrada
+      MIN(e.criado_em) AS primeiro_evento,
+      MAX(e.criado_em) AS ultimo_evento,
+      BOOL_OR(LOWER(TRIM(e.event)) = 'visita') AS visitou,
+      BOOL_OR(LOWER(TRIM(e.event)) = 'iniciou') AS iniciou_evento,
+      BOOL_OR(LOWER(TRIM(e.event)) = 'passo') AS teve_passo,
+      MAX(e.passo) FILTER (WHERE LOWER(TRIM(e.event)) = 'passo') AS max_passo_evento,
+      BOOL_OR(LOWER(TRIM(e.event)) IN ('captura', 'lead')) AS evento_form,
+      BOOL_OR(LOWER(TRIM(e.event)) = 'lead') AS evento_lead,
+      BOOL_OR(LOWER(TRIM(e.event)) = 'resultado') AS evento_resultado,
+      BOOL_OR(LOWER(TRIM(e.event)) = 'compra') AS clicou_comprar_evento,
+      BOOL_OR(
+        LOWER(TRIM(e.event)) IN (
+          'iniciou', 'passo', 'captura', 'lead', 'resultado',
+          'compra', 'intersticio', 'compromisso', 'oferta_view'
+        )
+      ) AS entrou_quiz,
+      (
+        ARRAY_AGG(LOWER(TRIM(e.ab_entrada)) ORDER BY e.criado_em ASC)
+          FILTER (WHERE LOWER(TRIM(e.ab_entrada)) IN ('a', 'b', 'c'))
+      )[1] AS entrada_eventos
     FROM funil_quiz.quiz_eventos e
-    INNER JOIN lead_session_ids ls ON ls.session_id = e.session_id
-    WHERE LOWER(TRIM(e.ab_entrada)) IN ('a', 'b', 'c')
-    ORDER BY e.session_id, e.criado_em ASC
+    WHERE NULLIF(TRIM(e.session_id), '') IS NOT NULL
+      AND (
+        (
+          e.criado_em >= $1::date
+          AND e.criado_em < ($2::date + interval '1 day')
+        )
+        OR e.session_id IN (SELECT session_id FROM lead_session_ids)
+      )
+    GROUP BY e.session_id
   ),
-  sessoes_enriquecidas AS (
-    SELECT DISTINCT ON (qs.session_id)
-      qs.*,
+  jornada_base AS (
+    SELECT
+      je.session_id,
+      je.primeiro_evento,
+      je.ultimo_evento,
+      je.visitou,
+      je.iniciou_evento,
+      je.teve_passo,
+      je.evento_form,
+      je.evento_lead,
+      je.evento_resultado,
+      je.clicou_comprar_evento,
+      je.entrou_quiz,
+      je.entrada_eventos,
+      GREATEST(
+        COALESCE(je.max_passo_evento, 0),
+        COALESCE(qs.max_pergunta, 0)
+      ) AS max_passo,
+      COALESCE(je.iniciou_evento, FALSE)
+        OR COALESCE(qs.iniciou, FALSE)
+        OR COALESCE(je.max_passo_evento, 0) >= 1
+        OR COALESCE(qs.max_pergunta, 0) >= 1 AS iniciou,
+      COALESCE(je.evento_form, FALSE)
+        OR COALESCE(qs.chegou_formulario, FALSE)
+        OR COALESCE(qs.virou_lead, FALSE) AS chegou_formulario,
+      COALESCE(je.clicou_comprar_evento, FALSE)
+        OR COALESCE(qs.clicou_comprar, FALSE) AS clicou_comprar,
+      qs.perfil,
+      CASE
+        WHEN je.entrada_eventos IN ('a', 'b', 'c') THEN je.entrada_eventos
+        WHEN LOWER(TRIM(qs.ab_entrada)) IN ('a', 'b', 'c') THEN LOWER(TRIM(qs.ab_entrada))
+        ELSE NULL
+      END AS entrada_resolvida,
       lv.email_norm AS lead_email_norm,
       lv.lead_ts,
-      COALESCE(
-        NULLIF(LOWER(TRIM(qs.ab_entrada)), ''),
-        ee.entrada
-      ) AS entrada_resolvida,
-      lv.lead_ts::date AS data_ref
-    FROM leads_validos lv
-    INNER JOIN funil_quiz.quiz_sessoes qs ON (
-      (NULLIF(TRIM(lv.session_id), '') IS NOT NULL AND qs.session_id = lv.session_id)
-      OR (
+      (lv.email_norm IS NOT NULL) AS tem_lead,
+      CASE
+        WHEN lv.lead_ts IS NOT NULL THEN lv.lead_ts::date
+        ELSE je.ultimo_evento::date
+      END AS data_ref
+    FROM jornada_eventos je
+    LEFT JOIN funil_quiz.quiz_sessoes qs ON qs.session_id = je.session_id
+    LEFT JOIN LATERAL (
+      SELECT lj.email_norm, lj.lead_ts
+      FROM leads_jornada lj
+      WHERE (
+        lj.session_id IS NOT NULL AND lj.session_id = je.session_id
+      ) OR (
         NULLIF(TRIM(qs.email), '') IS NOT NULL
-        AND LOWER(TRIM(qs.email)) = lv.email_norm
+        AND LOWER(TRIM(qs.email)) = lj.email_norm
+      )
+      ORDER BY
+        CASE
+          WHEN lj.session_id IS NOT NULL AND lj.session_id = je.session_id THEN 0
+          ELSE 1
+        END,
+        lj.lead_ts DESC NULLS LAST
+      LIMIT 1
+    ) lv ON TRUE
+    WHERE (
+      NULLIF(TRIM(qs.email), '') IS NULL
+      OR (
+        COALESCE(qs.email, '') NOT ILIKE '%teste%'
+        AND COALESCE(qs.email, '') NOT ILIKE '%reconecta%'
+        AND COALESCE(qs.email, '') NOT ILIKE '%test%'
       )
     )
-    LEFT JOIN entradas_eventos ee ON ee.session_id = qs.session_id
-    WHERE lv.lead_ts::date >= $1::date
-      AND lv.lead_ts::date <= $2::date
+  ),
+  sessoes_enriquecidas AS (
+    SELECT *
+    FROM jornada_base
+    WHERE data_ref >= $1::date
+      AND data_ref <= $2::date
       AND (
-        NULLIF(TRIM(qs.email), '') IS NULL
-        OR (
-          COALESCE(qs.email, '') NOT ILIKE '%teste%'
-          AND COALESCE(qs.email, '') NOT ILIKE '%reconecta%'
-        )
+        visitou
+        OR entrou_quiz
+        OR iniciou
+        OR max_passo > 0
+        OR tem_lead
       )
-    ORDER BY
-      qs.session_id,
-      CASE
-        WHEN NULLIF(TRIM(lv.session_id), '') IS NOT NULL AND qs.session_id = lv.session_id THEN 0
-        ELSE 1
-      END
   )`;
+}
+
+// Compat: nome antigo usado por funilQuiz — agora aponta para jornada por eventos.
+function sqlCteSessoesEnriquecidas() {
+  return sqlCteJornadaSessao();
 }
 
 module.exports = {
@@ -169,4 +251,5 @@ module.exports = {
   sqlJoinEntradaLead,
   sqlCteLeadsValidos,
   sqlCteSessoesEnriquecidas,
+  sqlCteJornadaSessao,
 };

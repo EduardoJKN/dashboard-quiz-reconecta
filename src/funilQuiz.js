@@ -1,21 +1,19 @@
 // ============================================================================
-// funilQuiz.js — metricas de sessao/funil, abandono e origem a partir de
-// funil_quiz.quiz_sessoes. Somente queries agregadas (COUNT/FILTER). Nao le
-// email, session_id ou qualquer PII individual.
+// funilQuiz.js — metricas de jornada por session_id a partir de
+// funil_quiz.quiz_eventos (etapas P1→P15), enriquecidas com quiz_sessoes e
+// lp_form.leads. Somente agregados — sem PII individual.
 //
-// Performance: 3 queries por chamada (base filtrada, A/B/C, visitas) em vez de
-// 11 scans repetidos da CTE enriquecida.
+// Unidade: DISTINCT session_id por etapa.
+// data_ref: data do lead se houver lead; senao ultimo_evento da sessao.
+// Performance: 2 queries (base filtrada + A/B/C).
 // ============================================================================
 const { query } = require('./db');
-const { sqlCteLeadsValidos, sqlCteSessoesEnriquecidas } = require('./filtroTesteLeadsSql');
+const { sqlCteJornadaSessao } = require('./filtroTesteLeadsSql');
 
-const CORE_CTES = `
-  ${sqlCteLeadsValidos()},
-  ${sqlCteSessoesEnriquecidas()}
-`;
+const CORE_CTES = sqlCteJornadaSessao();
 
 const P_ALCANCE_COLS = Array.from({ length: 15 }, (_, i) => (
-  `COUNT(*) FILTER (WHERE max_pergunta >= ${i + 1})::int AS p${i + 1}`
+  `COUNT(*) FILTER (WHERE max_passo >= ${i + 1})::int AS p${i + 1}`
 )).join(',\n      ');
 
 // Query 1: resumo + P1..P15 + abandono + perfis (1 scan materializado).
@@ -27,13 +25,19 @@ const SQL_FUNIL_FILTRADO = `
   ),
   agg AS (
     SELECT
-      COUNT(*)::int AS abriram,
+      COUNT(*) FILTER (WHERE visitou)::int AS visitas_pagina,
+      COUNT(*) FILTER (WHERE entrou_quiz OR iniciou OR max_passo > 0 OR tem_lead)::int AS abriram,
       COUNT(*) FILTER (WHERE iniciou)::int AS iniciaram,
-      COUNT(*) FILTER (WHERE max_pergunta >= 15)::int AS terminaram_quiz,
+      COUNT(*) FILTER (WHERE max_passo >= 15)::int AS terminaram_quiz,
       COUNT(*) FILTER (WHERE chegou_formulario)::int AS chegaram_form,
-      COUNT(*) FILTER (WHERE virou_lead)::int AS viraram_lead,
+      COUNT(*) FILTER (WHERE tem_lead)::int AS viraram_lead,
       COUNT(*) FILTER (WHERE clicou_comprar)::int AS clicaram_comprar,
-      COUNT(*) FILTER (WHERE chegou_formulario AND NOT virou_lead)::int AS abandono_formulario,
+      COUNT(*) FILTER (
+        WHERE NOT tem_lead
+          AND (chegou_formulario OR max_passo >= 15)
+      )::int AS abandono_formulario,
+      COUNT(*) FILTER (WHERE tem_lead)::int AS com_lead,
+      COUNT(*) FILTER (WHERE NOT tem_lead)::int AS sem_lead,
       ${P_ALCANCE_COLS}
     FROM base
   )
@@ -45,10 +49,18 @@ const SQL_FUNIL_FILTRADO = `
         'sessoes', t.sessoes
       ) ORDER BY t.parou_na_pergunta), '[]'::json)
       FROM (
-        SELECT max_pergunta AS parou_na_pergunta, COUNT(*)::int AS sessoes
+        SELECT
+          CASE
+            WHEN max_passo IS NULL OR max_passo <= 0 THEN 0
+            ELSE max_passo
+          END AS parou_na_pergunta,
+          COUNT(*)::int AS sessoes
         FROM base
-        WHERE NOT virou_lead
-        GROUP BY max_pergunta
+        WHERE NOT tem_lead
+          AND (entrou_quiz OR iniciou OR max_passo > 0)
+          AND max_passo > 0
+          AND max_passo < 15
+        GROUP BY 1
       ) t
     ) AS abandono_json,
     (
@@ -59,7 +71,7 @@ const SQL_FUNIL_FILTRADO = `
       FROM (
         SELECT TRIM(perfil) AS nome, COUNT(*)::int AS count
         FROM base
-        WHERE max_pergunta >= 15
+        WHERE max_passo >= 15
           AND NULLIF(TRIM(perfil), '') IS NOT NULL
         GROUP BY TRIM(perfil)
       ) t
@@ -76,36 +88,15 @@ const SQL_FUNIL_AB = `
   )
   SELECT
     entrada_resolvida AS entrada,
-    COUNT(*)::int AS abriram,
+    COUNT(*) FILTER (WHERE visitou)::int AS visitas,
+    COUNT(*) FILTER (WHERE entrou_quiz OR iniciou OR max_passo > 0 OR tem_lead)::int AS abriram,
     COUNT(*) FILTER (WHERE iniciou)::int AS iniciaram,
-    COUNT(*) FILTER (WHERE max_pergunta >= 15)::int AS terminaram,
-    COUNT(*) FILTER (WHERE virou_lead)::int AS converteram,
+    COUNT(*) FILTER (WHERE max_passo >= 15)::int AS terminaram,
+    COUNT(*) FILTER (WHERE tem_lead)::int AS converteram,
     ${P_ALCANCE_COLS}
   FROM base_ab
   GROUP BY entrada_resolvida
   ORDER BY entrada_resolvida
-`;
-
-// Query 3: visitas na pagina (filtrada) + totais por entrada A/B/C.
-const SQL_VISITAS = `
-  WITH visitas_canonicas AS MATERIALIZED (
-    SELECT DISTINCT ON (session_id)
-      session_id,
-      LOWER(TRIM(ab_entrada)) AS entrada
-    FROM funil_quiz.quiz_eventos
-    WHERE LOWER(TRIM(event)) = 'visita'
-      AND NULLIF(TRIM(session_id), '') IS NOT NULL
-      AND LOWER(TRIM(ab_entrada)) IN ('a', 'b', 'c')
-      AND criado_em >= $1::date
-      AND criado_em < ($2::date + interval '1 day')
-    ORDER BY session_id, criado_em ASC
-  )
-  SELECT
-    COUNT(*) FILTER (WHERE $3::text IS NULL OR entrada = $3::text)::int AS visitas_pagina,
-    COUNT(*) FILTER (WHERE entrada = 'a')::int AS visitas_a,
-    COUNT(*) FILTER (WHERE entrada = 'b')::int AS visitas_b,
-    COUNT(*) FILTER (WHERE entrada = 'c')::int AS visitas_c
-  FROM visitas_canonicas
 `;
 
 function parsePerguntasAlcance(row) {
@@ -131,12 +122,10 @@ function parsePerguntasAb(rows) {
 
 async function carregarFunilQuiz({ inicio, fim, entrada = null } = {}) {
   const paramsBase = [inicio, fim, entrada];
-  const paramsVisitas = [inicio, fim, entrada];
 
-  const [filtrado, abRows, visitas] = await Promise.all([
+  const [filtrado, abRows] = await Promise.all([
     query(SQL_FUNIL_FILTRADO, paramsBase),
     query(SQL_FUNIL_AB, [inicio, fim]),
-    query(SQL_VISITAS, paramsVisitas),
   ]);
 
   const r = filtrado.rows[0] || {};
@@ -167,16 +156,17 @@ async function carregarFunilQuiz({ inicio, fim, entrada = null } = {}) {
     }
   }
 
-  const v = visitas.rows[0] || {};
-  const visitas_por_entrada = {
-    a: v.visitas_a || 0,
-    b: v.visitas_b || 0,
-    c: v.visitas_c || 0,
-  };
+  const visitas_por_entrada = { a: 0, b: 0, c: 0 };
+  for (const row of abRows.rows) {
+    const k = row.entrada;
+    if (k === 'a' || k === 'b' || k === 'c') {
+      visitas_por_entrada[k] = row.visitas || 0;
+    }
+  }
 
   return {
     total_sessoes: r.abriram || 0,
-    visitas_pagina: v.visitas_pagina || 0,
+    visitas_pagina: r.visitas_pagina || 0,
     visitas_por_entrada,
     totais: {
       visitas: r.abriram || 0,
@@ -193,6 +183,10 @@ async function carregarFunilQuiz({ inicio, fim, entrada = null } = {}) {
     ab_entradas,
     perguntas_ab: parsePerguntasAb(abRows.rows),
     ab_metricas,
+    diag: {
+      com_lead: r.com_lead || 0,
+      sem_lead: r.sem_lead || 0,
+    },
   };
 }
 
